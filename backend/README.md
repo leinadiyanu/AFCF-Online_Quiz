@@ -11,6 +11,14 @@ npm run seed            # loads sample subject combinations + questions
 npm run dev              # starts the API on http://localhost:5000
 ```
 
+## Deployment
+
+On Render, set `MONGO_URI`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`, and `FRONTEND_URL` in the service environment. `FRONTEND_URL` may contain multiple comma-separated Vercel origins.
+
+Use `npm run build` as the Render build command and `npm start` as the start command. Run `npm run seed:admin` once with the production environment variables.
+
+On Vercel, set `VITE_API_URL` to the Render API URL including `/api`, for example `https://your-backend.onrender.com/api`, then redeploy. Do not commit either `.env` file.
+
 ## How the pieces fit together
 
 - **SubjectCombination** — a managed subject combo (code, name, subjects, exam duration).

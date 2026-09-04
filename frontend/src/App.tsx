@@ -3,7 +3,7 @@ import type { FormEvent } from 'react'
 import './App.css'
 import AdminPage from './AdminPage'
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api'
+const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:5000/api' : '')
 type Combination = { code: string; name: string; subjects: string[] }
 type Question = { _id: string; subject: string; text: string; options: string[] }
 type Result = { score: number; totalQuestions: number; status: string; late: boolean }
