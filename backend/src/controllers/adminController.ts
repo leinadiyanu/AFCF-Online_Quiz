@@ -10,6 +10,7 @@ import { SubjectCombination } from "../models/SubjectCombination";
 import { Attempt } from "../models/Attempt";
 import { ScoreboardPublication } from "../models/ScoreboardPublication";
 import mongoose from "mongoose";
+import crypto from "crypto";
 import { JWT_SECRET } from "../middleware/requireAdmin";
 
 function normalize(value: unknown) { return String(value ?? "").trim(); }
@@ -63,6 +64,8 @@ export async function bulkUploadQuestions(req: Request, res: Response) {
     else rows = parse(req.file.buffer.toString("utf8"), { columns: true, skip_empty_lines: true, trim: true });
   } catch { return res.status(400).json({ error: "Could not parse the uploaded file" }); }
 
+  const batchId = crypto.randomUUID();
+  const uploadedAt = new Date();
   const valid: Record<string, unknown>[] = [];
   const errors: { row: number; error: string }[] = [];
   for (const [index, row] of rows.entries()) {
@@ -71,10 +74,27 @@ export async function bulkUploadQuestions(req: Request, res: Response) {
     const resolved = await combinationIds(row.subjectCombination ?? row.subjectCombinationCode ?? row.subjectCombinationCodes);
     const missing = !normalize(row.question) || !normalize(row.subject) || !answer || options.some((option) => !option) || !resolved.codes.length;
     if (missing || !options.includes(answer)) { errors.push({ row: index + 2, error: missing ? "Missing required field or unknown subject combination" : "correctAnswer must match optionA-optionD" }); continue; }
-    valid.push({ text: normalize(row.question), options, correctOptionIndex: options.indexOf(answer), subject: normalize(row.subject), subjectCombinationCode: resolved.codes[0], subjectCombinationCodes: resolved.codes, difficulty: normalize(row.difficulty) || undefined });
+    valid.push({ text: normalize(row.question), options, correctOptionIndex: options.indexOf(answer), subject: normalize(row.subject), subjectCombinationCode: resolved.codes[0], subjectCombinationCodes: resolved.codes, difficulty: normalize(row.difficulty) || undefined, uploadBatchId: batchId, uploadFileName: req.file.originalname, uploadedAt });
   }
   if (valid.length) await Question.insertMany(valid);
-  return res.json({ inserted: valid.length, failed: errors.length, errors });
+  return res.json({ batchId, fileName: req.file.originalname, inserted: valid.length, failed: errors.length, errors });
+}
+
+export async function listQuestionBatches(_req: Request, res: Response) {
+  const batches = await Question.aggregate([
+    { $match: { uploadBatchId: { $exists: true, $ne: "" } } },
+    { $group: { _id: "$uploadBatchId", fileName: { $first: "$uploadFileName" }, uploadedAt: { $first: "$uploadedAt" }, questionCount: { $sum: 1 }, subjects: { $addToSet: "$subject" } } },
+    { $sort: { uploadedAt: -1 } },
+    { $project: { _id: 0, batchId: "$_id", fileName: 1, uploadedAt: 1, questionCount: 1, subjects: 1 } },
+  ]);
+  return res.json({ batches });
+}
+
+export async function deleteQuestionBatch(req: Request, res: Response) {
+  if (!req.params.batchId || req.params.batchId.length > 100) return res.status(400).json({ error: "Invalid batch ID" });
+  const result = await Question.deleteMany({ uploadBatchId: req.params.batchId });
+  if (!result.deletedCount) return res.status(404).json({ error: "Question batch not found" });
+  return res.json({ batchId: req.params.batchId, deleted: result.deletedCount });
 }
 
 export async function createExam(req: Request, res: Response) {

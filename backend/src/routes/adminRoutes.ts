@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import { requireAdmin } from "../middleware/requireAdmin";
-import { adminLogin, bulkUploadQuestions, createCombination, createExam, createQuestion, listAdminData, overallScoreboard, publishOverallScoreboard, publishScoreboard, scoreboard, toggleExam } from "../controllers/adminController";
+import { adminLogin, bulkUploadQuestions, createCombination, createExam, createQuestion, deleteQuestionBatch, listAdminData, listQuestionBatches, overallScoreboard, publishOverallScoreboard, publishScoreboard, scoreboard, toggleExam } from "../controllers/adminController";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -12,6 +12,8 @@ router.get("/scoreboard/overall", overallScoreboard);
 router.post("/subject-combinations", createCombination);
 router.post("/questions", createQuestion);
 router.post("/questions/bulk-upload", upload.single("file"), bulkUploadQuestions);
+router.get("/question-batches", listQuestionBatches);
+router.delete("/question-batches/:batchId", deleteQuestionBatch);
 router.post("/exams", createExam);
 router.patch("/exams/:id", toggleExam);
 router.get("/scoreboard/:examId", scoreboard);

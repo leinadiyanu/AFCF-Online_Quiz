@@ -10,6 +10,9 @@ export interface IQuestion extends Document {
   difficulty?: "easy" | "medium" | "hard";
   diagramUrl?: string;
   diagramAltText?: string;
+  uploadBatchId?: string;
+  uploadFileName?: string;
+  uploadedAt?: Date;
 }
 
 const QuestionSchema = new Schema<IQuestion>({
@@ -26,6 +29,9 @@ const QuestionSchema = new Schema<IQuestion>({
   difficulty: { type: String, enum: ["easy", "medium", "hard"] },
   diagramUrl: { type: String, trim: true },
   diagramAltText: { type: String, trim: true },
+  uploadBatchId: { type: String, index: true, trim: true },
+  uploadFileName: { type: String, trim: true },
+  uploadedAt: { type: Date },
 });
 
 export const Question = model<IQuestion>("Question", QuestionSchema);
