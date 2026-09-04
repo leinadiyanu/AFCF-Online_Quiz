@@ -36,7 +36,7 @@ export async function adminLogin(req: Request, res: Response) {
 export async function createCombination(req: Request, res: Response) {
   const { code, name, subjects, durationMinutes } = req.body;
   if (!code || !name || !Array.isArray(subjects) || !subjects.length) return res.status(400).json({ error: "code, name and subjects are required" });
-  const combo = await SubjectCombination.create({ code: normalize(code).toUpperCase(), name: normalize(name), subjects: subjects.map(normalize), durationMinutes: Number(durationMinutes) || 40 });
+  const combo = await SubjectCombination.create({ code: normalize(code).toUpperCase(), name: normalize(name), subjects: subjects.map(normalize), durationMinutes: Number(durationMinutes) || 60 });
   return res.status(201).json({ subjectCombination: combo });
 }
 
