@@ -4,6 +4,7 @@ import { Attempt } from "../models/Attempt";
 import { Student } from "../models/Student";
 import { SubjectCombination } from "../models/SubjectCombination";
 import { Question } from "../models/Question";
+import { Exam } from "../models/Exam";
 
 const QUESTIONS_PER_SUBJECT = 10;
 
@@ -25,6 +26,14 @@ export async function startAttempt(req: Request, res: Response) {
 
     const student = await Student.findById(studentId);
     if (!student) return res.status(404).json({ error: "Student not found" });
+
+    const now = new Date();
+    const exam = await Exam.findOne({
+      isActive: true,
+      scheduledStart: { $lte: now },
+      scheduledEnd: { $gte: now },
+    }).sort({ scheduledEnd: 1 });
+    if (!exam) return res.status(409).json({ error: "There is no active exam right now" });
 
     // Prevent starting a second attempt while one is already in progress
     const existing = await Attempt.findOne({
@@ -53,12 +62,15 @@ export async function startAttempt(req: Request, res: Response) {
     if (!combo) {
       return res.status(400).json({ error: "Subject combination not configured" });
     }
+    if (!exam.subjectCombinations.some((id) => id.toString() === combo._id.toString())) {
+      return res.status(400).json({ error: "This subject combination is not enabled for the active exam" });
+    }
 
     // Pick an even set of questions so every subject contributes equally.
     const questionGroups = await Promise.all(
       combo.subjects.map((subject) =>
         Question.aggregate([
-          { $match: { subjectCombinationCode: combo.code, subject } },
+          { $match: { subject, $or: [{ subjectCombinationCodes: combo.code }, { subjectCombinationCode: combo.code }] } },
           { $sample: { size: QUESTIONS_PER_SUBJECT } },
         ])
       )
@@ -77,10 +89,11 @@ export async function startAttempt(req: Request, res: Response) {
 
     const attempt = await Attempt.create({
       student: student._id,
+      exam: exam._id,
       subjectCombinationCode: combo.code,
       questionIds: questions.map((q) => q._id),
       startedAt,
-      durationMinutes: combo.durationMinutes,
+      durationMinutes: exam.duration,
       status: "in_progress",
       answers: questions.map((q) => ({ question: q._id, selectedOptionIndex: null })),
     });

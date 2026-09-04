@@ -1,0 +1,25 @@
+.admin-shell { max-width: 1180px; min-height: 100vh; margin: auto; padding: 32px 6vw; color: #172554; background: #f8fafc; }
+.admin-header { display: flex; align-items: end; justify-content: space-between; border-bottom: 1px solid #cbd5e1; padding-bottom: 24px; margin-bottom: 28px; }
+.admin-header-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.admin-header h1, .admin-login h1 { font-size: clamp(2.8rem, 6vw, 5.5rem); line-height: .95; letter-spacing: -.06em; margin: 0; }
+.admin-login h1 { font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1; letter-spacing: -.04em; }
+.admin-kicker { color: #b45309; font: 600 11px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 15px; }
+.admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.admin-panel, .admin-login { background: white; border: 1px solid #cbd5e1; border-radius: 8px; padding: 24px; }
+.admin-panel h2 { margin: 0 0 20px; font-size: 1.15rem; }
+.admin-panel form, .admin-login form { display: grid; gap: 15px; }
+.admin-panel label, .admin-login label { color: #475569; font-size: 12px; }
+.admin-panel input, .admin-panel select, .admin-panel textarea, .admin-login input { border: 1px solid #cbd5e1; padding: 10px; background: #fff; color: #172554; }
+.admin-panel textarea { min-height: 90px; resize: vertical; }
+.admin-panel button, .admin-header button, .admin-login button, .exam-list button { background: #172554; color: white; border-radius: 6px; padding: 11px 14px; font-weight: 700; }
+.admin-login { max-width: 500px; margin: 15vh auto; }
+.back-link { background: transparent; color: #64748b; text-decoration: underline; margin-bottom: 30px; }
+.admin-message { color: #166534; background: #dcfce7; padding: 12px; border-radius: 6px; }
+.admin-error { color: #991b1b; background: #fee2e2; padding: 12px; border-radius: 6px; }
+.admin-panel p { color: #64748b; font-size: 13px; line-height: 1.5; }
+.exam-list { grid-column: 1 / -1; }
+.exam-list article { display: flex; justify-content: space-between; gap: 20px; align-items: center; border-top: 1px solid #e2e8f0; padding: 16px 0; }
+.exam-list article div:first-child { display: grid; gap: 5px; }
+.exam-list small { color: #64748b; }
+.exam-list article div:last-child { display: flex; gap: 8px; }
+@media (max-width: 760px) { .admin-grid { grid-template-columns: 1fr; } .admin-header { align-items: start; gap: 20px; } .exam-list article { align-items: start; flex-direction: column; } }

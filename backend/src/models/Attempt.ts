@@ -10,6 +10,7 @@ export interface IAnswer {
 export interface IAttempt extends Document {
   student: Types.ObjectId;
   subjectCombinationCode: string;
+  exam: Types.ObjectId | null;
   questionIds: Types.ObjectId[];
   startedAt: Date;
   durationMinutes: number;
@@ -30,6 +31,7 @@ const AnswerSchema = new Schema<IAnswer>(
 const AttemptSchema = new Schema<IAttempt>({
   student: { type: Schema.Types.ObjectId, ref: "Student", required: true },
   subjectCombinationCode: { type: String, required: true },
+  exam: { type: Schema.Types.ObjectId, ref: "Exam", default: null, index: true },
   questionIds: [{ type: Schema.Types.ObjectId, ref: "Question" }],
   startedAt: { type: Date, required: true, default: Date.now },
   durationMinutes: { type: Number, required: true },
