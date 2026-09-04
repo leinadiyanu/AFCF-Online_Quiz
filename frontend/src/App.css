@@ -41,3 +41,7 @@ legend > div { min-width: 0; line-height: 1.45; }
 .question-diagram { display: block; width: min(100%, 720px); max-height: 420px; object-fit: contain; object-position: left center; margin-top: 20px; border: 1px solid var(--line); background: white; }
 .options label { overflow-wrap: anywhere; line-height: 1.45; }
 @media (max-width: 700px) { .exam-top { top: 0; padding: 10px 0 16px; } .question-diagram { max-height: 300px; margin-top: 16px; } }
+.intake button:not(:disabled):hover, .submit:not(:disabled):hover, .result button:not(:disabled):hover { background: #b45309; transform: translateY(-1px); }
+.intake button:not(:disabled):active, .submit:not(:disabled):active, .result button:not(:disabled):active { transform: translateY(0); }
+button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
+.options label:hover { border-color: var(--coral); background: #fff7ed; }

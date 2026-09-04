@@ -12,8 +12,12 @@
 .admin-panel input, .admin-panel select, .admin-panel textarea, .admin-login input { border: 1px solid #cbd5e1; padding: 10px; background: #fff; color: #172554; }
 .admin-panel textarea { min-height: 90px; resize: vertical; }
 .admin-panel button, .admin-header button, .admin-login button, .exam-list button { background: #172554; color: white; border-radius: 6px; padding: 11px 14px; font-weight: 700; }
+.admin-panel button:not(:disabled):hover, .admin-header button:not(:disabled):hover, .admin-login button:not(:disabled):hover, .exam-list button:not(:disabled):hover { background: #b45309; transform: translateY(-1px); }
+.admin-panel button:not(:disabled):active, .admin-header button:not(:disabled):active, .admin-login button:not(:disabled):active, .exam-list button:not(:disabled):active { transform: translateY(0); }
+.admin-panel button:focus-visible, .admin-header button:focus-visible, .admin-login button:focus-visible, .exam-list button:focus-visible, .back-link:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 .admin-login { max-width: 500px; margin: 15vh auto; }
 .back-link { background: transparent; color: #64748b; text-decoration: underline; margin-bottom: 30px; }
+.back-link:hover { color: #b45309; }
 .admin-message { color: #166534; background: #dcfce7; padding: 12px; border-radius: 6px; }
 .admin-error { color: #991b1b; background: #fee2e2; padding: 12px; border-radius: 6px; }
 .admin-panel p { color: #64748b; font-size: 13px; line-height: 1.5; }
