@@ -23,6 +23,12 @@
 .onboarding-actions button { background: var(--ink); color: white; padding: 16px 20px; text-align: left; font-weight: 700; display: flex; justify-content: space-between; gap: 28px; min-width: 220px; border-radius: 8px; }
 .onboarding-actions button span { color: var(--lime); }
 .onboarding-actions .quiet-button { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.onboarding-actions button:not(:disabled):hover { background: #b45309; transform: translateY(-1px); }
+.onboarding-actions button:not(:disabled):active { transform: translateY(0); }
+.onboarding-actions .quiet-button:not(:disabled):hover { background: var(--soft-surface); color: var(--ink); border-color: var(--coral); }
+.back-onboarding { align-self: flex-start; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 20px 0 0; font-weight: 700; }
+.back-onboarding:hover { color: var(--ink); border-color: var(--coral); background: var(--soft-surface); transform: translateY(-1px); }
+.back-onboarding:active { transform: translateY(0); }
 .returning-form label { font-size: 15px; }
 .returning-form input { font-size: 18px; min-height: 46px; }
 .profile-details { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 22px 0; margin: 38px 0; }
