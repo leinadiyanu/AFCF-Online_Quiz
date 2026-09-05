@@ -1,0 +1,448 @@
+diff --git a/backend/src/controllers/adminController.ts b/backend/src/controllers/adminController.ts
+index 37a1cd3..c852107 100644
+--- a/backend/src/controllers/adminController.ts
++++ b/backend/src/controllers/adminController.ts
+@@ -163,12 +163,13 @@ export async function publishScoreboard(req: Request, res: Response) {
+ export async function overallScoreboard(_req: Request, res: Response) {
+   const results = await Attempt.aggregate([
+     { $match: { status: { $in: ["submitted", "expired"] }, score: { $ne: null } } },
+-    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" } } },
++    { $sort: { submittedAt: 1 } },
++    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" }, rankChange: { $last: "$rankChange" } } },
+     { $lookup: { from: "students", localField: "_id", foreignField: "_id", as: "student" } },
+     { $unwind: "$student" },
+     { $addFields: { percentage: { $round: [{ $multiply: [{ $divide: ["$totalScore", "$totalQuestions"] }, 100] }, 1] } } },
+     { $sort: { percentage: -1, latestSubmittedAt: 1 } },
+-    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1 } },
++    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1, rankChange: 1 } },
+   ]);
+   const publication = await ScoreboardPublication.findOne({ key: "overall" });
+   return res.json({ published: Boolean(publication?.published), results });
+@@ -183,6 +184,19 @@ export async function publishOverallScoreboard(req: Request, res: Response) {
+   return res.json({ published: publication.published });
+ }
+ 
++// Publishes the scoreboard for every exam that has at least one graded attempt,
++// plus the overall cumulative scoreboard, in one action.
++export async function publishAllScoreboards(_req: Request, res: Response) {
++  const examIds = await Attempt.distinct("exam", { status: { $in: ["submitted", "expired"] }, exam: { $ne: null } });
++  await Exam.updateMany({ _id: { $in: examIds } }, { scoreboardPublished: true });
++  const publication = await ScoreboardPublication.findOneAndUpdate(
++    { key: "overall" },
++    { key: "overall", published: true },
++    { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
++  );
++  return res.json({ publishedExamCount: examIds.length, overallPublished: publication.published });
++}
++
+ export async function listAdminData(_req: Request, res: Response) {
+   const [subjectCombinations, exams, publication] = await Promise.all([
+     SubjectCombination.find().sort({ name: 1 }),
+diff --git a/backend/src/controllers/attemptController.ts b/backend/src/controllers/attemptController.ts
+index ae5b3c8..c30e320 100644
+--- a/backend/src/controllers/attemptController.ts
++++ b/backend/src/controllers/attemptController.ts
+@@ -8,6 +8,20 @@ import { Exam } from "../models/Exam";
+ 
+ const QUESTIONS_PER_SUBJECT = 10;
+ 
++// Recomputes the cumulative overall leaderboard and returns this student's current rank
++// (1-based), or null if they have no graded attempts yet (shouldn't happen right after grading).
++async function getOverallRank(studentId: mongoose.Types.ObjectId): Promise<number | null> {
++  const standings = await Attempt.aggregate([
++    { $match: { status: { $in: ["submitted", "expired"] }, score: { $ne: null } } },
++    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, latestSubmittedAt: { $max: "$submittedAt" } } },
++    { $addFields: { percentage: { $divide: ["$totalScore", "$totalQuestions"] } } },
++    { $sort: { percentage: -1, latestSubmittedAt: 1 } },
++    { $project: { _id: 1 } },
++  ]);
++  const index = standings.findIndex((entry) => entry._id.toString() === studentId.toString());
++  return index === -1 ? null : index + 1;
++}
++
+ function getDeadline(startedAt: Date, durationMinutes: number): Date {
+   return new Date(startedAt.getTime() + durationMinutes * 60_000);
+ }
+@@ -209,6 +223,18 @@ export async function submitAttempt(req: Request, res: Response) {
+     attempt.submittedAt = now;
+     attempt.status = isLate ? "expired" : "submitted";
+     attempt.score = score;
++
++    // Work out how this attempt moved the student on the cumulative overall leaderboard.
++    const student = await Student.findById(attempt.student).select("lastOverallRank");
++    const previousRank = student?.lastOverallRank ?? null;
++    const newRank = await getOverallRank(attempt.student as mongoose.Types.ObjectId);
++    attempt.rankAfter = newRank;
++    attempt.rankChange = previousRank !== null && newRank !== null ? previousRank - newRank : null;
++    if (student && newRank !== null) {
++      student.lastOverallRank = newRank;
++      await student.save();
++    }
++
+     await attempt.save();
+ 
+     return res.json({
+@@ -217,9 +243,76 @@ export async function submitAttempt(req: Request, res: Response) {
+       score,
+       totalQuestions: attempt.questionIds.length,
+       late: isLate,
++      rankAfter: attempt.rankAfter,
++      rankChange: attempt.rankChange,
+     });
+   } catch (err) {
+     console.error(err);
+     return res.status(500).json({ error: "Failed to submit attempt" });
+   }
+ }
++
++// GET /attempts/:id/review?email=...
++// Lets a student see their own finished attempt broken down question-by-question,
++// like a Google Forms quiz review: their answer, whether it was right, and the correct one.
++// Ownership is checked by email since the public flow has no auth token.
++export async function getAttemptReview(req: Request, res: Response) {
++  try {
++    if (!mongoose.isValidObjectId(req.params.id)) {
++      return res.status(400).json({ error: "attemptId must be a valid ID" });
++    }
++    const email = String(req.query.email ?? "").trim().toLowerCase();
++    if (!email) return res.status(400).json({ error: "email is required" });
++
++    const attempt = await Attempt.findById(req.params.id)
++      .populate("student", "email")
++      .populate("exam", "title");
++    if (!attempt) return res.status(404).json({ error: "Attempt not found" });
++
++    const owner = attempt.student as unknown as { email: string } | null;
++    if (!owner || owner.email !== email) {
++      return res.status(403).json({ error: "This attempt does not belong to that email" });
++    }
++    if (attempt.status === "in_progress") {
++      return res.status(409).json({ error: "This attempt hasn't been submitted yet" });
++    }
++
++    const questions = await Question.find({ _id: { $in: attempt.questionIds } })
++      .select("_id subject text options correctOptionIndex diagramUrl diagramAltText");
++    const questionById = new Map(questions.map((q) => [q._id.toString(), q]));
++    const answerByQuestion = new Map(attempt.answers.map((a) => [a.question.toString(), a.selectedOptionIndex]));
++
++    const review = attempt.questionIds
++      .map((questionId) => {
++        const question = questionById.get(questionId.toString());
++        if (!question) return null;
++        const selectedOptionIndex = answerByQuestion.get(questionId.toString()) ?? null;
++        return {
++          questionId: question._id,
++          subject: question.subject,
++          text: question.text,
++          options: question.options,
++          diagramUrl: question.diagramUrl,
++          diagramAltText: question.diagramAltText,
++          correctOptionIndex: question.correctOptionIndex,
++          selectedOptionIndex,
++          isCorrect: selectedOptionIndex !== null && selectedOptionIndex === question.correctOptionIndex,
++        };
++      })
++      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
++
++    const exam = attempt.exam as unknown as { title: string } | null;
++    return res.json({
++      attemptId: attempt._id,
++      exam: exam ? { title: exam.title } : null,
++      subjectCombinationCode: attempt.subjectCombinationCode,
++      score: attempt.score,
++      totalQuestions: attempt.questionIds.length,
++      submittedAt: attempt.submittedAt,
++      questions: review,
++    });
++  } catch (err) {
++    console.error(err);
++    return res.status(500).json({ error: "Failed to load attempt review" });
++  }
++}
+diff --git a/backend/src/controllers/publicController.ts b/backend/src/controllers/publicController.ts
+index 866a79a..bbda499 100644
+--- a/backend/src/controllers/publicController.ts
++++ b/backend/src/controllers/publicController.ts
+@@ -21,11 +21,20 @@ export async function getExamAccess(req: Request, res: Response) {
+   return res.json({ exam: { _id: exam._id, title: exam.title, subjectCombinations: exam.subjectCombinations } });
+ }
+ 
++// Returns EVERY exam that has a published scoreboard (not just the most recent one),
++// each with its own ranked list of results, newest exam first.
+ export async function getPublicScoreboard(_req: Request, res: Response) {
+-  const exam = await Exam.findOne({ scoreboardPublished: true }).sort({ scheduledEnd: -1 });
+-  if (!exam) return res.json({ published: false, exam: null, results: [] });
+-  const results = await Attempt.find({ exam: exam._id, status: { $in: ["submitted", "expired"] } }).populate("student", "name courseOfStudy").sort({ score: -1, submittedAt: 1 }).select("student score submittedAt status");
+-  return res.json({ published: true, exam: { _id: exam._id, title: exam.title }, results });
++  const exams = await Exam.find({ scoreboardPublished: true }).sort({ scheduledEnd: -1 });
++  const boards = await Promise.all(
++    exams.map(async (exam) => {
++      const results = await Attempt.find({ exam: exam._id, status: { $in: ["submitted", "expired"] } })
++        .populate("student", "name courseOfStudy")
++        .sort({ score: -1, submittedAt: 1 })
++        .select("student score submittedAt status");
++      return { exam: { _id: exam._id, title: exam.title }, results };
++    })
++  );
++  return res.json({ published: boards.length > 0, boards });
+ }
+ 
+ export async function getPublicOverallScoreboard(_req: Request, res: Response) {
+@@ -33,12 +42,15 @@ export async function getPublicOverallScoreboard(_req: Request, res: Response) {
+   if (!publication?.published) return res.json({ published: false, results: [] });
+   const results = await Attempt.aggregate([
+     { $match: { status: { $in: ["submitted", "expired"] }, score: { $ne: null } } },
+-    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" } } },
++    { $sort: { submittedAt: 1 } },
++    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" }, rankChange: { $last: "$rankChange" } } },
+     { $lookup: { from: "students", localField: "_id", foreignField: "_id", as: "student" } },
+     { $unwind: "$student" },
+     { $addFields: { percentage: { $round: [{ $multiply: [{ $divide: ["$totalScore", "$totalQuestions"] }, 100] }, 1] } } },
+     { $sort: { percentage: -1, latestSubmittedAt: 1 } },
+-    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1 } },
++    // rankChange here reflects each student's most recent graded attempt: positive = climbed
++    // that many places since their previous attempt, negative = dropped, null = first attempt.
++    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1, rankChange: 1 } },
+   ]);
+   return res.json({ published: true, results });
+ }
+\ No newline at end of file
+diff --git a/backend/src/models/Attempt.ts b/backend/src/models/Attempt.ts
+index 94126f0..43301ff 100644
+--- a/backend/src/models/Attempt.ts
++++ b/backend/src/models/Attempt.ts
+@@ -18,6 +18,11 @@ export interface IAttempt extends Document {
+   status: AttemptStatus;
+   answers: IAnswer[];
+   score: number | null;
++  // Overall-ranking snapshot taken right after this attempt was graded.
++  rankAfter: number | null;
++  // rankAfter compared to the student's previous overall rank: positive = moved up,
++  // negative = moved down, 0 = no change, null = first ranked attempt (nothing to compare).
++  rankChange: number | null;
+ }
+ 
+ const AnswerSchema = new Schema<IAnswer>(
+@@ -43,6 +48,8 @@ const AttemptSchema = new Schema<IAttempt>({
+   },
+   answers: { type: [AnswerSchema], default: [] },
+   score: { type: Number, default: null },
++  rankAfter: { type: Number, default: null },
++  rankChange: { type: Number, default: null },
+ });
+ 
+ export const Attempt = model<IAttempt>("Attempt", AttemptSchema);
+diff --git a/backend/src/models/Student.ts b/backend/src/models/Student.ts
+index ca910e7..59056e1 100644
+--- a/backend/src/models/Student.ts
++++ b/backend/src/models/Student.ts
+@@ -7,6 +7,7 @@ export interface IStudent extends Document {
+   courseOfStudy: string;
+   subjectCombinationCode: string;
+   createdAt: Date;
++  lastOverallRank: number | null;
+ }
+ 
+ const StudentSchema = new Schema<IStudent>({
+@@ -16,6 +17,10 @@ const StudentSchema = new Schema<IStudent>({
+   courseOfStudy: { type: String, required: true, trim: true },
+   subjectCombinationCode: { type: String, required: true, index: true },
+   createdAt: { type: Date, default: Date.now },
++  // Snapshot of this student's position in the cumulative overall ranking,
++  // captured the last time one of their attempts was graded. Used to work
++  // out whether their latest attempt moved them up or down the leaderboard.
++  lastOverallRank: { type: Number, default: null },
+ });
+ 
+ export const Student = model<IStudent>("Student", StudentSchema);
+diff --git a/backend/src/routes/adminRoutes.ts b/backend/src/routes/adminRoutes.ts
+index ca1c643..d7750b7 100644
+--- a/backend/src/routes/adminRoutes.ts
++++ b/backend/src/routes/adminRoutes.ts
+@@ -1,7 +1,7 @@
+ import { Router } from "express";
+ import multer from "multer";
+ import { requireAdmin } from "../middleware/requireAdmin";
+-import { adminLogin, bulkUploadQuestions, createCombination, createExam, deleteExam, deleteQuestionBatch, deleteUnbatchedQuestions, listAdminData, listQuestionBatches, overallScoreboard, publishOverallScoreboard, publishScoreboard, scoreboard, updateExam } from "../controllers/adminController";
++import { adminLogin, bulkUploadQuestions, createCombination, createExam, deleteExam, deleteQuestionBatch, deleteUnbatchedQuestions, listAdminData, listQuestionBatches, overallScoreboard, publishAllScoreboards, publishOverallScoreboard, publishScoreboard, scoreboard, updateExam } from "../controllers/adminController";
+ 
+ const router = Router();
+ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+@@ -19,5 +19,6 @@ router.patch("/exams/:id", updateExam);
+ router.delete("/exams/:id", deleteExam);
+ router.get("/scoreboard/:examId", scoreboard);
+ router.patch("/scoreboard/overall/publish", publishOverallScoreboard);
++router.patch("/scoreboard/publish-all", publishAllScoreboards);
+ router.patch("/scoreboard/:examId/publish", publishScoreboard);
+ export default router;
+\ No newline at end of file
+diff --git a/backend/src/routes/attemptRoutes.ts b/backend/src/routes/attemptRoutes.ts
+index ea519ee..509f86b 100644
+--- a/backend/src/routes/attemptRoutes.ts
++++ b/backend/src/routes/attemptRoutes.ts
+@@ -3,6 +3,7 @@ import {
+   startAttempt,
+   getAttemptQuestions,
+   submitAttempt,
++  getAttemptReview,
+ } from "../controllers/attemptController";
+ 
+ const router = Router();
+@@ -10,5 +11,6 @@ const router = Router();
+ router.post("/attempts", startAttempt);
+ router.get("/attempts/:id/questions", getAttemptQuestions);
+ router.post("/attempts/:id/submit", submitAttempt);
++router.get("/attempts/:id/review", getAttemptReview);
+ 
+ export default router;
+diff --git a/frontend/src/AdminPage.tsx b/frontend/src/AdminPage.tsx
+index e3d0a61..8a1c303 100644
+--- a/frontend/src/AdminPage.tsx
++++ b/frontend/src/AdminPage.tsx
+@@ -57,8 +57,9 @@ export default function AdminPage() {
+     } catch (err) { setError((err as Error).message) } finally { setBusyExamId('') }
+   }
+   async function publishOverall() { const next = !overallPublished; await api('/admin/scoreboard/overall/publish', { method: 'PATCH', body: JSON.stringify({ published: next }) }, token); setOverallPublished(next); setMessage(next ? 'Overall performance published' : 'Overall performance unpublished') }
++  async function publishAll() { setError(''); try { const response = await api<{ publishedExamCount: number; overallPublished: boolean }>('/admin/scoreboard/publish-all', { method: 'PATCH' }, token); await load(); setMessage(`Published ${response.publishedExamCount} exam scoreboard${response.publishedExamCount === 1 ? '' : 's'} and the overall scoreboard`) } catch (err) { setError((err as Error).message) } }
+   if (!token) return <main className="admin-shell"><button className="back-link" onClick={() => { window.location.hash = '' }}>Back to landing</button><section className="admin-login"><p className="admin-kicker">Control room</p><h1>Admin sign in</h1><form onSubmit={login}><label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label><button>Sign in</button></form>{error && <div ref={notificationRef} className="admin-notifications" role="alert" aria-live="assertive"><p className="admin-error">{error}</p></div>}</section></main>
+-  return <main className="admin-shell"><header className="admin-header"><div><p className="admin-kicker">AFCF-OAU / Control room</p><h1>Exam operations</h1></div><div className="admin-header-actions"><button onClick={() => void publishOverall()}>{overallPublished ? 'Unpublish overall results' : 'Publish overall results'}</button><button onClick={() => { sessionStorage.removeItem('adminToken'); setToken('') }}>Sign out</button></div></header>{message && <p className="admin-message">{message}</p>}{error && <p className="admin-error">{error}</p>}<div className="admin-grid"><section className="admin-panel"><h2>Subject combination</h2><form onSubmit={createCombo}><label>Code<input value={combo.code} onChange={(event) => setCombo({ ...combo, code: event.target.value })} required /></label><label>Name<input value={combo.name} onChange={(event) => setCombo({ ...combo, name: event.target.value })} required /></label><label>Subjects<input value={combo.subjects} onChange={(event) => setCombo({ ...combo, subjects: event.target.value })} placeholder="Maths, Physics, Chemistry" required /></label><button>Create combination</button></form></section><section className="admin-panel"><h2>Schedule exam</h2><form onSubmit={scheduleExam}><label>Title<input value={exam.title} onChange={(event) => setExam({ ...exam, title: event.target.value })} required /></label><label>Combination<select value={exam.combo} onChange={(event) => setExam({ ...exam, combo: event.target.value })} required><option value="">Select one</option>{combos.map((item) => <option key={item._id} value={item._id}>{item.code}</option>)}</select></label><label>Starts<input type="datetime-local" value={exam.scheduledStart} onChange={(event) => setExam({ ...exam, scheduledStart: event.target.value })} required /></label><label>Ends<input type="datetime-local" value={exam.scheduledEnd} onChange={(event) => setExam({ ...exam, scheduledEnd: event.target.value })} required /></label><label>Duration<input type="number" min="1" value={exam.duration} onChange={(event) => setExam({ ...exam, duration: event.target.value })} required /></label><button>Schedule exam</button></form></section><section className="admin-panel"><h2>Add question</h2><form onSubmit={addQuestion}><label>Question<textarea value={question.text} onChange={(event) => setQuestion({ ...question, text: event.target.value })} required /></label><label>Subject<input value={question.subject} onChange={(event) => setQuestion({ ...question, subject: event.target.value })} required /></label><label>Combination<select value={question.combo} onChange={(event) => setQuestion({ ...question, combo: event.target.value })} required><option value="">Select one</option>{combos.map((item) => <option key={item._id} value={item.code}>{item.code}</option>)}</select></label>{(['optionA', 'optionB', 'optionC', 'optionD'] as const).map((key) => <label key={key}>{key}<input value={question[key]} onChange={(event) => setQuestion({ ...question, [key]: event.target.value })} required /></label>)}<label>Correct answer<input value={question.correctAnswer} onChange={(event) => setQuestion({ ...question, correctAnswer: event.target.value })} required /></label><button>Add question</button></form></section><section className="admin-panel"><h2>Bulk upload</h2><p>CSV, Excel, or JSON.</p><form onSubmit={uploadQuestions}><input type="file" accept=".csv,.xlsx,.xls,.json" onChange={(event) => setUpload(event.target.files?.[0] ?? null)} required /><button>Upload question bank</button></form></section></div><section className="admin-panel exam-list"><h2>Question batches</h2>{batches.length ? batches.map((item) => <article key={item.batchId}><div><strong>{item.fileName}</strong><small>{item.questionCount} questions · {item.subjects.join(', ')} · {new Date(item.uploadedAt).toLocaleString()}</small></div><button onClick={() => void deleteBatch(item)}>Delete batch</button></article>) : <p>No bulk-uploaded question batches yet.</p>}</section><section className="admin-panel exam-list"><h2>Exam desk</h2>{exams.map((item) => editingExam?.id === item._id
++  return <main className="admin-shell"><header className="admin-header"><div><p className="admin-kicker">AFCF-OAU / Control room</p><h1>Exam operations</h1></div><div className="admin-header-actions"><button onClick={() => void publishAll()}>Publish all scoreboards</button><button onClick={() => void publishOverall()}>{overallPublished ? 'Unpublish overall results' : 'Publish overall results'}</button><button onClick={() => { sessionStorage.removeItem('adminToken'); setToken('') }}>Sign out</button></div></header>{message && <p className="admin-message">{message}</p>}{error && <p className="admin-error">{error}</p>}<div className="admin-grid"><section className="admin-panel"><h2>Subject combination</h2><form onSubmit={createCombo}><label>Code<input value={combo.code} onChange={(event) => setCombo({ ...combo, code: event.target.value })} required /></label><label>Name<input value={combo.name} onChange={(event) => setCombo({ ...combo, name: event.target.value })} required /></label><label>Subjects<input value={combo.subjects} onChange={(event) => setCombo({ ...combo, subjects: event.target.value })} placeholder="Maths, Physics, Chemistry" required /></label><button>Create combination</button></form></section><section className="admin-panel"><h2>Schedule exam</h2><form onSubmit={scheduleExam}><label>Title<input value={exam.title} onChange={(event) => setExam({ ...exam, title: event.target.value })} required /></label><label>Combination<select value={exam.combo} onChange={(event) => setExam({ ...exam, combo: event.target.value })} required><option value="">Select one</option>{combos.map((item) => <option key={item._id} value={item._id}>{item.code}</option>)}</select></label><label>Starts<input type="datetime-local" value={exam.scheduledStart} onChange={(event) => setExam({ ...exam, scheduledStart: event.target.value })} required /></label><label>Ends<input type="datetime-local" value={exam.scheduledEnd} onChange={(event) => setExam({ ...exam, scheduledEnd: event.target.value })} required /></label><label>Duration<input type="number" min="1" value={exam.duration} onChange={(event) => setExam({ ...exam, duration: event.target.value })} required /></label><button>Schedule exam</button></form></section><section className="admin-panel"><h2>Add question</h2><form onSubmit={addQuestion}><label>Question<textarea value={question.text} onChange={(event) => setQuestion({ ...question, text: event.target.value })} required /></label><label>Subject<input value={question.subject} onChange={(event) => setQuestion({ ...question, subject: event.target.value })} required /></label><label>Combination<select value={question.combo} onChange={(event) => setQuestion({ ...question, combo: event.target.value })} required><option value="">Select one</option>{combos.map((item) => <option key={item._id} value={item.code}>{item.code}</option>)}</select></label>{(['optionA', 'optionB', 'optionC', 'optionD'] as const).map((key) => <label key={key}>{key}<input value={question[key]} onChange={(event) => setQuestion({ ...question, [key]: event.target.value })} required /></label>)}<label>Correct answer<input value={question.correctAnswer} onChange={(event) => setQuestion({ ...question, correctAnswer: event.target.value })} required /></label><button>Add question</button></form></section><section className="admin-panel"><h2>Bulk upload</h2><p>CSV, Excel, or JSON.</p><form onSubmit={uploadQuestions}><input type="file" accept=".csv,.xlsx,.xls,.json" onChange={(event) => setUpload(event.target.files?.[0] ?? null)} required /><button>Upload question bank</button></form></section></div><section className="admin-panel exam-list"><h2>Question batches</h2>{batches.length ? batches.map((item) => <article key={item.batchId}><div><strong>{item.fileName}</strong><small>{item.questionCount} questions · {item.subjects.join(', ')} · {new Date(item.uploadedAt).toLocaleString()}</small></div><button onClick={() => void deleteBatch(item)}>Delete batch</button></article>) : <p>No bulk-uploaded question batches yet.</p>}</section><section className="admin-panel exam-list"><h2>Exam desk</h2>{exams.map((item) => editingExam?.id === item._id
+   ? <article key={item._id}><form className="edit-exam-form" onSubmit={saveExamSchedule}><strong>{item.title}</strong><label>Starts<input type="datetime-local" value={editingExam.scheduledStart} onChange={(event) => setEditingExam({ ...editingExam, scheduledStart: event.target.value })} required /></label><label>Ends<input type="datetime-local" value={editingExam.scheduledEnd} onChange={(event) => setEditingExam({ ...editingExam, scheduledEnd: event.target.value })} required /></label><label>Duration (minutes)<input type="number" min="1" value={editingExam.duration} onChange={(event) => setEditingExam({ ...editingExam, duration: event.target.value })} required /></label><div><button disabled={busyExamId === item._id}>{busyExamId === item._id ? 'Saving...' : 'Save'}</button><button type="button" onClick={() => setEditingExam(null)} disabled={busyExamId === item._id}>Cancel</button></div></form></article>
+   : <article key={item._id}><div><strong>{item.title}</strong><small>{new Date(item.scheduledStart).toLocaleString()} to {new Date(item.scheduledEnd).toLocaleString()}</small></div><div><button onClick={() => startEditExam(item)} disabled={busyExamId === item._id}>Edit</button><button onClick={() => void toggleExam(item)} disabled={busyExamId === item._id}>{item.isActive ? 'Deactivate' : 'Activate'}</button><button onClick={() => void publishExam(item)} disabled={busyExamId === item._id}>{item.scoreboardPublished ? 'Unpublish scores' : 'Publish scores'}</button><button className="danger-button" onClick={() => void deleteExam(item)} disabled={busyExamId === item._id}>Delete exam</button></div></article>)}</section></main>
+ }
+\ No newline at end of file
+diff --git a/frontend/src/App.css b/frontend/src/App.css
+index 40ef6ac..7eed60c 100644
+--- a/frontend/src/App.css
++++ b/frontend/src/App.css
+@@ -97,4 +97,30 @@ button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
+ 	.back-onboarding { border-color: var(--line); color: var(--muted); }
+ 	.back-onboarding:hover { background: var(--soft-surface); color: var(--ink); border-color: var(--coral); }
+ 	.resume { color: var(--muted); }
+-}
+\ No newline at end of file
++}
++/* Rank movement indicator (overall scoreboard + post-quiz result) */
++.rank-change { font-weight: 700; text-transform: none; letter-spacing: 0; }
++.rank-change.up { color: #16a34a; }
++.rank-change.down { color: var(--coral); }
++.rank-change.flat { color: var(--muted); }
++.rank-change.new { color: var(--lime); }
++.rank-summary { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
++.rank-summary b { color: var(--ink); }
++
++/* Previous-performance rows are now buttons that open the solution review */
++.history-row { width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--line); text-align: left; font: inherit; color: inherit; cursor: pointer; }
++.history-row:hover { background: var(--soft-surface); }
++.view-solution { grid-column: 1 / -1; color: var(--ink); font-weight: 700; margin-top: 4px; }
++@media (max-width: 700px) { .view-solution { grid-column: 1; grid-row: 3; } }
++
++/* Solution review screen */
++.solution-review { padding: 6vh 0; flex: 1; }
++.solution-list { margin-top: 30px; }
++.solution-question.correct { border-left: 3px solid #16a34a; padding-left: 18px; }
++.solution-question.incorrect { border-left: 3px solid var(--coral); padding-left: 18px; }
++.options label.solution-correct { border-color: #16a34a; background: #f0fdf4; }
++.options label.solution-wrong { border-color: var(--coral); background: #fff1f2; }
++.solution-tag { display: block; margin-top: 6px; font: 500 10px 'DM Mono', monospace; text-transform: uppercase; color: #16a34a; }
++.solution-tag.wrong { color: var(--coral); }
++.question-diagram { max-width: 100%; margin: 16px 0 0 45px; border: 1px solid var(--line); }
++@media (max-width: 700px) { .question-diagram { margin-left: 0; } }
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index a006acf..445ba86 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -7,26 +7,40 @@ import AdminPage from './AdminPage'
+ const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:5000/api' : '')
+ type Combination = { code: string; name: string; subjects: string[] }
+ type Question = { _id: string; subject: string; text: string; options: string[] }
+-type Result = { score: number; totalQuestions: number; status: string; late: boolean }
++type Result = { score: number; totalQuestions: number; status: string; late: boolean; rankAfter: number | null; rankChange: number | null }
+ type ExamStatus = { status: 'none' | 'upcoming' | 'active'; active: boolean; exams: { _id: string; title: string; scheduledStart: string; scheduledEnd: string }[]; exam: { title: string; scheduledStart: string; scheduledEnd: string } | null }
+-type PublicScoreboard = { published: boolean; exam: { title: string } | null; results: { student: { name: string; courseOfStudy: string }; score: number; submittedAt: string }[] }
+-type OverallScoreboard = { published: boolean; results: { student: { name: string; courseOfStudy: string }; totalScore: number; totalQuestions: number; quizzesTaken: number; percentage: number }[] }
+-type StudentProfile = { student: { id: string; name: string; email: string; phoneNumber: string; courseOfStudy: string; subjectCombination: Combination | null }; previousAttempts: { exam: { title: string } | null; subjectCombinationCode: string; score: number | null; submittedAt: string; status: string }[]; exam: { title: string; accessCode: string } }
++type ExamBoard = { exam: { _id: string; title: string }; results: { student: { name: string; courseOfStudy: string }; score: number; submittedAt: string }[] }
++type PublicScoreboard = { published: boolean; boards: ExamBoard[] }
++type OverallScoreboard = { published: boolean; results: { student: { name: string; courseOfStudy: string }; totalScore: number; totalQuestions: number; quizzesTaken: number; percentage: number; rankChange: number | null }[] }
++type StudentProfile = { student: { id: string; name: string; email: string; phoneNumber: string; courseOfStudy: string; subjectCombination: Combination | null }; previousAttempts: { _id: string; exam: { title: string } | null; subjectCombinationCode: string; score: number | null; submittedAt: string; status: string }[]; exam: { title: string; accessCode: string } }
++type AttemptReview = { attemptId: string; exam: { title: string } | null; subjectCombinationCode: string; score: number | null; totalQuestions: number; submittedAt: string | null; questions: { questionId: string; subject: string; text: string; options: string[]; diagramUrl?: string; diagramAltText?: string; correctOptionIndex: number; selectedOptionIndex: number | null; isCorrect: boolean }[] }
+ 
+ class RequestError extends Error { status: number; constructor(message: string, status: number) { super(message); this.status = status } }
+ async function request<T>(path: string, options?: RequestInit): Promise<T> { const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 15000); try { const response = await fetch(`${API_BASE}${path}`, { ...options, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...options?.headers } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new RequestError(body.error ?? 'Something went wrong', response.status); return body as T } finally { window.clearTimeout(timeout) } }
+ 
++function RankChange({ value }: { value: number | null }) {
++  if (value === null) return <small className="rank-change new">NEW</small>
++  if (value === 0) return <small className="rank-change flat">– no change</small>
++  return value > 0 ? <small className="rank-change up">▲ {value}</small> : <small className="rank-change down">▼ {Math.abs(value)}</small>
++}
++
+ function OverallScoreboard({ scoreboard }: { scoreboard: OverallScoreboard }) {
+-  return <section className="public-scoreboard"><p className="kicker">Overall performance</p><h2>Published results across all quizzes</h2>{scoreboard.results.length ? scoreboard.results.map((entry, index) => <div className="score-row" key={`${entry.student.name}-${entry.quizzesTaken}`}><span>{String(index + 1).padStart(2, '0')}</span><strong>{entry.student.name}</strong><small>{entry.student.courseOfStudy} · {entry.quizzesTaken} quiz{entry.quizzesTaken === 1 ? '' : 'zes'}</small><b>{entry.percentage.toFixed(1)}%</b></div>) : <p className="status">No completed quiz results yet.</p>}</section>
++  return <section className="public-scoreboard"><p className="kicker">Overall performance</p><h2>Published results across all quizzes</h2>{scoreboard.results.length ? scoreboard.results.map((entry, index) => <div className="score-row" key={`${entry.student.name}-${entry.quizzesTaken}`}><span>{String(index + 1).padStart(2, '0')}</span><strong>{entry.student.name}</strong><small>{entry.student.courseOfStudy} · {entry.quizzesTaken} quiz{entry.quizzesTaken === 1 ? '' : 'zes'}</small><RankChange value={entry.rankChange} /><b>{entry.percentage.toFixed(1)}%</b></div>) : <p className="status">No completed quiz results yet.</p>}</section>
+ }
+ 
+ function Footer() {
+   return <footer>© 2026 Apostolic Faith Campus Fellowship - OAU <span>BE A SHINNING LIGHT</span></footer>
+ }
+ 
++function ExamBoards({ boards }: { boards: ExamBoard[] }) {
++  return <>{boards.map((board) => <section className="public-scoreboard" key={board.exam._id}><p className="kicker">Published results</p><h2>{board.exam.title} results</h2>{board.results.length ? board.results.map((entry, index) => <div className="score-row" key={`${entry.student.name}-${entry.submittedAt}`}><span>{String(index + 1).padStart(2, '0')}</span><strong>{entry.student.name}</strong><small>{entry.student.courseOfStudy}</small><b>{entry.score}</b></div>) : <p className="status">No published results yet.</p>}</section>)}</>
++}
++
++// Overall performance always renders above the individual exam scoreboards.
+ function PublishedScoreboards({ publicScoreboard, overallScoreboard }: { publicScoreboard: PublicScoreboard | null; overallScoreboard: OverallScoreboard | null }) {
+-  if (!publicScoreboard?.published) return overallScoreboard?.published ? <OverallScoreboard scoreboard={overallScoreboard} /> : null
+-  return <><section className="public-scoreboard"><p className="kicker">Published results</p><h2>{publicScoreboard.exam?.title ?? 'Latest exam'} results</h2>{publicScoreboard.results.length ? publicScoreboard.results.map((entry, index) => <div className="score-row" key={`${entry.student.name}-${entry.submittedAt}`}><span>{String(index + 1).padStart(2, '0')}</span><strong>{entry.student.name}</strong><small>{entry.student.courseOfStudy}</small><b>{entry.score}</b></div>) : <p className="status">No published results yet.</p>}</section>{overallScoreboard?.published && <OverallScoreboard scoreboard={overallScoreboard} />}</>
++  const hasBoards = Boolean(publicScoreboard?.published && publicScoreboard.boards.length)
++  if (!hasBoards) return overallScoreboard?.published ? <OverallScoreboard scoreboard={overallScoreboard} /> : null
++  return <>{overallScoreboard?.published && <OverallScoreboard scoreboard={overallScoreboard} />}<ExamBoards boards={publicScoreboard!.boards} /></>
+ }
+ 
+ function App() {
+@@ -35,12 +49,14 @@ function App() {
+   const [studentId, setStudentId] = useState<string | null>(() => sessionStorage.getItem('studentId')); const [attemptId, setAttemptId] = useState<string | null>(() => sessionStorage.getItem('attemptId')); const [questions, setQuestions] = useState<Question[]>([])
+   const [answers, setAnswers] = useState<Record<string, number>>({}); const [deadline, setDeadline] = useState<number | null>(null); const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
+   const [result, setResult] = useState<Result | null>(() => { const saved = sessionStorage.getItem('result'); return saved ? JSON.parse(saved) as Result : null })
+-  const [examStatus, setExamStatus] = useState<ExamStatus>({ status: 'none', active: false, exams: [], exam: null }); const [publicScoreboard, setPublicScoreboard] = useState<PublicScoreboard | null>(null); const [overallScoreboard, setOverallScoreboard] = useState<OverallScoreboard | null>(null)
++  const [examStatus, setExamStatus] = useState<ExamStatus>({ status: 'none', active: false, exams: [], exam: null }); const [publicScoreboard, setPublicScoreboard] = useState<PublicScoreboard | null>({ published: false, boards: [] }); const [overallScoreboard, setOverallScoreboard] = useState<OverallScoreboard | null>(null)
+   const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [error, setError] = useState('')
+   const [codeLoading, setCodeLoading] = useState(false)
+   const [intakeForm, setIntakeForm] = useState<HTMLFormElement | null>(null)
+   const [onboarding, setOnboarding] = useState<'choice' | 'new' | 'returning'>('choice')
+   const [profile, setProfile] = useState<StudentProfile | null>(null)
++  const [reviewAttempt, setReviewAttempt] = useState<AttemptReview | null>(null)
++  const [reviewLoading, setReviewLoading] = useState(false)
+   const alertRef = useRef<HTMLDivElement>(null)
+ 
+   useEffect(() => { if (attemptId) sessionStorage.setItem(`answers:${attemptId}`, JSON.stringify(answers)) }, [answers, attemptId])
+@@ -53,23 +69,25 @@ function App() {
+   useEffect(() => { if (!loading && !attemptId && !result && onboarding === 'new') { const timer = window.setTimeout(() => setIntakeForm(document.querySelector<HTMLFormElement>('.intake')), 0); return () => window.clearTimeout(timer) } }, [loading, attemptId, result, onboarding])
+   async function loadExamCode() { if (examCode.trim().length < 6) return; setCodeLoading(true); setError(''); try { const result = await request<{ exam: { subjectCombinations: Combination[] } }>(`/exam-access/${encodeURIComponent(examCode.trim())}`); setCombinations(result.exam.subjectCombinations); setSubjectCombinationCode(result.exam.subjectCombinations[0]?.code ?? '') } catch (err) { setError((err as Error).message) } finally { setCodeLoading(false) } }
+   async function loadProfile(event: FormEvent) { event.preventDefault(); setError(''); setBusy(true); try { const result = await request<StudentProfile>(`/students/profile?email=${encodeURIComponent(email)}&examCode=${encodeURIComponent(examCode)}`); setProfile(result) } catch (err) { setError((err as Error).message) } finally { setBusy(false) } }
++  async function loadReview(attemptId: string, ownerEmail: string) { setReviewLoading(true); setError(''); try { const data = await request<AttemptReview>(`/attempts/${attemptId}/review?email=${encodeURIComponent(ownerEmail)}`); setReviewAttempt(data) } catch (err) { setError((err as Error).message) } finally { setReviewLoading(false) } }
+   async function startReturningExam() { if (!profile) return; setError(''); setBusy(true); try { const attempt = await request<{ attemptId: string }>('/attempts', { method: 'POST', body: JSON.stringify({ studentId: profile.student.id, examCode }) }); sessionStorage.setItem('studentId', profile.student.id); sessionStorage.setItem('attemptId', String(attempt.attemptId)); setStudentId(profile.student.id); setAttemptId(String(attempt.attemptId)) } catch (err) { setError((err as Error).message) } finally { setBusy(false) } }
+ 
+   async function startExam(event: FormEvent) { event.preventDefault(); setError(''); setBusy(true); try { if (!examStatus.active) throw new Error('There is no active exam right now.'); const student = await request<{ studentId: string }>('/students', { method: 'POST', body: JSON.stringify({ name, email, phoneNumber, courseOfStudy, subjectCombinationCode, examCode }) }); const attempt = await request<{ attemptId: string }>('/attempts', { method: 'POST', body: JSON.stringify({ studentId: student.studentId, examCode }) }); sessionStorage.setItem('studentId', student.studentId); sessionStorage.setItem('attemptId', String(attempt.attemptId)); setStudentId(student.studentId); setAttemptId(String(attempt.attemptId)) } catch (err) { setError((err as Error).message) } finally { setBusy(false) } }
+   function reset() { if (attemptId) sessionStorage.removeItem(`answers:${attemptId}`); ['studentId', 'attemptId', 'result'].forEach((key) => sessionStorage.removeItem(key)); setStudentId(null); setAttemptId(null); setQuestions([]); setAnswers({}); setDeadline(null); setSecondsLeft(null); setResult(null); setExamCode(''); setProfile(null); setOnboarding('choice'); setError('') }
+   if (loading) return <main className="shell"><p className="status">Loading exam desk...</p><Footer /></main>
+   if (window.location.hash === '#admin') return <AdminPage />
++  if (reviewAttempt) return <main className="shell onboarding-shell"><header className="masthead"><div className="brand"><img className="brand-logo" src="/image.svg" alt="AFCF-OAU logo" /><span className="eyebrow">AFCF-OAU</span></div><span className="session">SOLUTION REVIEW</span></header>{error && <div ref={alertRef} className="alert" role="alert" aria-live="assertive">{error}</div>}<section className="solution-review"><p className="kicker">{reviewAttempt.exam?.title ?? 'Previous exam'}</p><h1>You scored {reviewAttempt.score ?? 0} out of {reviewAttempt.totalQuestions}.</h1><div className="solution-list">{reviewAttempt.questions.map((question, index) => <fieldset className={`question solution-question ${question.isCorrect ? 'correct' : 'incorrect'}`} key={question.questionId}><legend><span>{String(index + 1).padStart(2, '0')}</span><div><small>{question.subject}</small>{question.text}</div></legend>{question.diagramUrl && <img className="question-diagram" src={question.diagramUrl} alt={question.diagramAltText ?? ''} />}<div className="options">{question.options.map((option, optionIndex) => { const isCorrectOption = optionIndex === question.correctOptionIndex; const isSelected = optionIndex === question.selectedOptionIndex; const cls = isCorrectOption ? 'solution-correct' : isSelected ? 'solution-wrong' : ''; return <label className={cls} key={option}><input type="radio" checked={isSelected} readOnly disabled />{option}{isCorrectOption && <span className="solution-tag">Correct answer</span>}{isSelected && !isCorrectOption && <span className="solution-tag wrong">Your answer</span>}</label> })}</div>{question.selectedOptionIndex === null && <p className="status">You left this question unanswered.</p>}</fieldset>)}</div><div className="onboarding-actions"><button onClick={() => setReviewAttempt(null)}>Back to your record <span>↗</span></button></div></section><Footer /></main>
+   if (!attemptId && !result && onboarding === 'choice') return <main className="shell onboarding-shell"><header className="masthead"><div className="brand"><img className="brand-logo" src="/image.svg" alt="AFCF-OAU logo" /><span className="eyebrow">AFCF-OAU</span></div><span className="session">2026 POST-UTME MOCK EXAMINATION</span></header>{error && <div ref={alertRef} className="alert" role="alert" aria-live="assertive">{error}</div>}<section className="onboarding"><p className="kicker">Before we begin</p><h1>Have you taken an exam with us before?</h1><p className="lede">Choose an option so we can keep your results connected to the right student record.</p><div className="onboarding-actions"><button onClick={() => setOnboarding('new')}>This is my first exam <span>↗</span></button><button onClick={() => setOnboarding('returning')}>I am a returning student <span>↗</span></button></div></section><PublishedScoreboards publicScoreboard={publicScoreboard} overallScoreboard={overallScoreboard} /><Footer /></main>
+   if (!attemptId && !result && onboarding === 'returning' && !profile) return <main className="shell onboarding-shell"><header className="masthead"><div className="brand"><img className="brand-logo" src="/image.svg" alt="AFCF-OAU logo" /><span className="eyebrow">AFCF-OAU</span></div><span className="session">RETURNING STUDENT</span></header>{error && <div ref={alertRef} className="alert" role="alert" aria-live="assertive">{error}</div>}<section className="returning-form"><p className="kicker">Welcome back</p><h1>Find your student record.</h1><p className="lede">Enter the email you used before and the access code for this exam.</p><form onSubmit={loadProfile}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" /></label><label>Exam access code<input value={examCode} onChange={(event) => setExamCode(event.target.value.toUpperCase())} required minLength={6} maxLength={32} pattern="[A-Z0-9-]+" placeholder="Enter the code provided by the admin" /></label><div className="onboarding-actions"><button disabled={busy}>{busy ? 'Finding your record...' : 'Continue'} <span>↗</span></button><button type="button" className="quiet-button" onClick={() => { setError(''); setOnboarding('choice') }}>Back</button></div></form></section><Footer /></main>
+-  if (!attemptId && !result && profile) return <main className="shell onboarding-shell"><header className="masthead"><div className="brand"><img className="brand-logo" src="/image.svg" alt="AFCF-OAU logo" /><span className="eyebrow">AFCF-OAU</span></div><span className="session">READY TO BEGIN</span></header>{error && <div ref={alertRef} className="alert" role="alert" aria-live="assertive">{error}</div>}<section className="profile-panel"><p className="kicker">Your student record</p><h1>Welcome back, {profile.student.name}.</h1><div className="profile-details"><div><small>Email</small><strong>{profile.student.email}</strong></div><div><small>Course of study</small><strong>{profile.student.courseOfStudy}</strong></div><div><small>Subject combination</small><strong>{profile.student.subjectCombination?.code} · {profile.student.subjectCombination?.name}</strong></div></div><h2>Previous performance</h2>{profile.previousAttempts.length ? <div className="history-list">{profile.previousAttempts.map((attempt, index) => <div className="history-row" key={`${attempt.submittedAt}-${index}`}><span>{attempt.exam?.title ?? 'Previous exam'}</span><small>{attempt.subjectCombinationCode} · {new Date(attempt.submittedAt).toLocaleDateString()}</small><b>{attempt.score ?? 0} marks</b></div>)}</div> : <p className="status">No previous completed exams yet.</p>}<div className="onboarding-actions"><button disabled={busy} onClick={() => void startReturningExam()}>{busy ? 'Starting exam...' : `Start ${profile.exam.title}`} <span>↗</span></button><button className="quiet-button" onClick={() => { setProfile(null); setError('') }}>Use a different email</button></div></section><Footer /></main>
++  if (!attemptId && !result && profile) return <main className="shell onboarding-shell"><header className="masthead"><div className="brand"><img className="brand-logo" src="/image.svg" alt="AFCF-OAU logo" /><span className="eyebrow">AFCF-OAU</span></div><span className="session">READY TO BEGIN</span></header>{error && <div ref={alertRef} className="alert" role="alert" aria-live="assertive">{error}</div>}<section className="profile-panel"><p className="kicker">Your student record</p><h1>Welcome back, {profile.student.name}.</h1><div className="profile-details"><div><small>Email</small><strong>{profile.student.email}</strong></div><div><small>Course of study</small><strong>{profile.student.courseOfStudy}</strong></div><div><small>Subject combination</small><strong>{profile.student.subjectCombination?.code} · {profile.student.subjectCombination?.name}</strong></div></div><h2>Previous performance</h2>{profile.previousAttempts.length ? <div className="history-list">{profile.previousAttempts.map((attempt, index) => <button type="button" className="history-row" key={`${attempt.submittedAt}-${index}`} disabled={reviewLoading} onClick={() => void loadReview(attempt._id, profile.student.email)}><span>{attempt.exam?.title ?? 'Previous exam'}</span><small>{attempt.subjectCombinationCode} · {new Date(attempt.submittedAt).toLocaleDateString()}</small><b>{attempt.score ?? 0} marks</b><small className="view-solution">{reviewLoading ? 'Loading…' : 'View solution ↗'}</small></button>)}</div> : <p className="status">No previous completed exams yet.</p>}<div className="onboarding-actions"><button disabled={busy} onClick={() => void startReturningExam()}>{busy ? 'Starting exam...' : `Start ${profile.exam.title}`} <span>↗</span></button><button className="quiet-button" onClick={() => { setProfile(null); setError('') }}>Use a different email</button></div></section><Footer /></main>
+   const examCodeField = <label className="exam-code-field">Exam access code<input value={examCode} onChange={(event) => setExamCode(event.target.value.toUpperCase())} onBlur={() => void loadExamCode()} required minLength={6} maxLength={32} pattern="[A-Z0-9-]+" placeholder="Enter the code provided by the admin" />{codeLoading && <small>Loading exam combinations...</small>}</label>
+   const activeExamList = examStatus.exams.filter((exam) => new Date(exam.scheduledStart) <= new Date() && new Date(exam.scheduledEnd) >= new Date())
+   function formatDateTime(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'time unavailable' : date.toLocaleString() }
+   return <main className="shell"><header className="masthead"><div className="brand"><img className="brand-logo" src="/image.svg" alt="AFCF-OAU logo" /><span className="eyebrow">AFCF-OAU</span></div><span className="session">{attemptId ? 'EXAMINATION IN PROGRESS' : '2026 POST-UTME MOCK EXAMINATION'}</span></header>{!attemptId && !result && onboarding === 'new' && <button type="button" className="back-onboarding" onClick={() => { setError(''); setOnboarding('choice') }}>← Back to exam type</button>}{error && <div ref={alertRef} className="alert" role="alert" aria-live="assertive">{error}</div>}
+     {!attemptId && !result && intakeForm && createPortal(examCodeField, intakeForm)}
+-    {!attemptId && !result && <><section className="intro"><div><p className="kicker">AFCF-OAU POST-UTME MOCK EXAMINATION · 2026</p><h1>Prepare <br /><em> Practice </em> Perform </h1><p className="lede">This mock examination is designed to simulate the Post-UTME examination environment and help you assess your level of preparation.</p><div className={`exam-banner ${examStatus.status}`}><strong>{examStatus.status === 'active' ? 'Exam in progress' : examStatus.status === 'upcoming' ? 'Next exam' : 'No exam right now'}</strong>{examStatus.status === 'active' && activeExamList.length > 0 ? <ul className="exam-banner-list">{activeExamList.map((exam) => <li key={exam._id}>{exam.title} · Ends at {formatDateTime(exam.scheduledEnd)}</li>)}</ul> : <span>{examStatus.exam ? `${examStatus.exam.title} · Starts at ${formatDateTime(examStatus.exam.scheduledStart)}` : 'Check back when an administrator schedules an exam.'}</span>}</div></div><form className="intake" onSubmit={startExam}><label>Full name<input value={name} onChange={(event) => setName(event.target.value)} required placeholder="Enter your full name" /></label><div className="contact-fields"><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" /></label><label>Phone number<input type="tel" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} required placeholder="e.g., 08012345678" /></label></div><label>Course of study<input value={courseOfStudy} onChange={(event) => setCourseOfStudy(event.target.value)} required placeholder="e.g., Computer Engineering" /></label><label>Subject combination<select value={subjectCombinationCode} onChange={(event) => setSubjectCombinationCode(event.target.value)} required>{combinations.map((combo) => <option value={combo.code} key={combo.code}>{combo.code} · {combo.name}</option>)}</select></label><button disabled={busy || !combinations.length || !examStatus.active}>{busy ? 'Loading questions...' : examStatus.active ? 'Begin assessment' : 'Exam unavailable'} <span>→</span></button><small>Your timer begins when you begin the assessment.</small></form></section>{publicScoreboard?.published && <section className="public-scoreboard"><p className="kicker">Published results</p><h2>{publicScoreboard.exam?.title}</h2>{publicScoreboard.results.map((entry, index) => <div className="score-row" key={`${entry.student.name}-${entry.submittedAt}`}><span>{String(index + 1).padStart(2, '0')}</span><strong>{entry.student.name}</strong><small>{entry.student.courseOfStudy}</small><b>{entry.score}</b></div>)}</section>}{overallScoreboard?.published && <OverallScoreboard scoreboard={overallScoreboard} />}</>}
++    {!attemptId && !result && <><section className="intro"><div><p className="kicker">AFCF-OAU POST-UTME MOCK EXAMINATION · 2026</p><h1>Prepare <br /><em> Practice </em> Perform </h1><p className="lede">This mock examination is designed to simulate the Post-UTME examination environment and help you assess your level of preparation.</p><div className={`exam-banner ${examStatus.status}`}><strong>{examStatus.status === 'active' ? 'Exam in progress' : examStatus.status === 'upcoming' ? 'Next exam' : 'No exam right now'}</strong>{examStatus.status === 'active' && activeExamList.length > 0 ? <ul className="exam-banner-list">{activeExamList.map((exam) => <li key={exam._id}>{exam.title} · Ends at {formatDateTime(exam.scheduledEnd)}</li>)}</ul> : <span>{examStatus.exam ? `${examStatus.exam.title} · Starts at ${formatDateTime(examStatus.exam.scheduledStart)}` : 'Check back when an administrator schedules an exam.'}</span>}</div></div><form className="intake" onSubmit={startExam}><label>Full name<input value={name} onChange={(event) => setName(event.target.value)} required placeholder="Enter your full name" /></label><div className="contact-fields"><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" /></label><label>Phone number<input type="tel" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} required placeholder="e.g., 08012345678" /></label></div><label>Course of study<input value={courseOfStudy} onChange={(event) => setCourseOfStudy(event.target.value)} required placeholder="e.g., Computer Engineering" /></label><label>Subject combination<select value={subjectCombinationCode} onChange={(event) => setSubjectCombinationCode(event.target.value)} required>{combinations.map((combo) => <option value={combo.code} key={combo.code}>{combo.code} · {combo.name}</option>)}</select></label><button disabled={busy || !combinations.length || !examStatus.active}>{busy ? 'Loading questions...' : examStatus.active ? 'Begin assessment' : 'Exam unavailable'} <span>→</span></button><small>Your timer begins when you begin the assessment.</small></form></section><PublishedScoreboards publicScoreboard={publicScoreboard} overallScoreboard={overallScoreboard} /></>}
+     {attemptId && !result && <section className="exam"><div className="exam-top"><div><p className="kicker">Examination in progress</p><h1>Read each question carefully and select the most appropriate answer.</h1></div><div className="exam-actions"><div className={`timer ${secondsLeft !== null && secondsLeft < 60 ? 'urgent' : ''}`}><small>TIME REMAINING</small><strong>{secondsLeft === null ? '--:--' : `${String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:${String(secondsLeft % 60).padStart(2, '0')}`}</strong></div><button className="submit standby" disabled={busy} onClick={() => void submit()}>{busy ? 'Submitting...' : 'Submit assessment'} <span>↗</span></button></div></div>{!questions.length ? <p className="status">Loading questions...</p> : <div className="question-list">{questions.map((question, index) => <fieldset className="question" key={question._id}><legend><span>{String(index + 1).padStart(2, '0')}</span><div><small>{question.subject}</small>{question.text}</div></legend><div className="options">{question.options.map((option, optionIndex) => <label className={answers[question._id] === optionIndex ? 'selected' : ''} key={option}><input type="radio" name={question._id} checked={answers[question._id] === optionIndex} onChange={() => setAnswers((current) => ({ ...current, [question._id]: optionIndex }))} />{option}</label>)}</div></fieldset>)}</div>}</section>}
+-    {result && <section className="result"><p className="kicker">Assessment complete</p><h1>{result.status === 'expired' ? 'Time was called.' : 'Well considered.'}</h1><div className="score"><strong>{result.score}</strong><span>/ {result.totalQuestions}<br />correct answers</span></div><p>{result.late ? 'Your answers were recorded and graded after the deadline.' : 'Your answers were recorded successfully.'}</p><button onClick={reset}>Return to intake <span>↗</span></button></section>}{studentId && !attemptId && !result && <button className="resume" onClick={reset}>Clear saved session</button>}<footer>© 2026 Apostolic Faith Campus Fellowship - OAU <span>BE A SHINNING LIGHT</span></footer></main>
++    {result && <section className="result"><p className="kicker">Assessment complete</p><h1>{result.status === 'expired' ? 'Time was called.' : 'Well considered.'}</h1><div className="score"><strong>{result.score}</strong><span>/ {result.totalQuestions}<br />correct answers</span></div>{result.rankAfter !== null && <p className="rank-summary">Overall rank: <b>#{result.rankAfter}</b> <RankChange value={result.rankChange} /></p>}<p>{result.late ? 'Your answers were recorded and graded after the deadline.' : 'Your answers were recorded successfully.'}</p><button onClick={reset}>Return to intake <span>↗</span></button></section>}{studentId && !attemptId && !result && <button className="resume" onClick={reset}>Clear saved session</button>}<footer>© 2026 Apostolic Faith Campus Fellowship - OAU <span>BE A SHINNING LIGHT</span></footer></main>
+ }
+ 
+ export default App
+\ No newline at end of file

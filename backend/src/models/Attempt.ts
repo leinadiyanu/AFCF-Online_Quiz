@@ -18,6 +18,11 @@ export interface IAttempt extends Document {
   status: AttemptStatus;
   answers: IAnswer[];
   score: number | null;
+  // Overall-ranking snapshot taken right after this attempt was graded.
+  rankAfter: number | null;
+  // rankAfter compared to the student's previous overall rank: positive = moved up,
+  // negative = moved down, 0 = no change, null = first ranked attempt (nothing to compare).
+  rankChange: number | null;
 }
 
 const AnswerSchema = new Schema<IAnswer>(
@@ -43,6 +48,8 @@ const AttemptSchema = new Schema<IAttempt>({
   },
   answers: { type: [AnswerSchema], default: [] },
   score: { type: Number, default: null },
+  rankAfter: { type: Number, default: null },
+  rankChange: { type: Number, default: null },
 });
 
 export const Attempt = model<IAttempt>("Attempt", AttemptSchema);

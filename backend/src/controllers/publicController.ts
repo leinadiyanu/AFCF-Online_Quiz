@@ -21,11 +21,20 @@ export async function getExamAccess(req: Request, res: Response) {
   return res.json({ exam: { _id: exam._id, title: exam.title, subjectCombinations: exam.subjectCombinations } });
 }
 
+// Returns EVERY exam that has a published scoreboard (not just the most recent one),
+// each with its own ranked list of results, newest exam first.
 export async function getPublicScoreboard(_req: Request, res: Response) {
-  const exam = await Exam.findOne({ scoreboardPublished: true }).sort({ scheduledEnd: -1 });
-  if (!exam) return res.json({ published: false, exam: null, results: [] });
-  const results = await Attempt.find({ exam: exam._id, status: { $in: ["submitted", "expired"] } }).populate("student", "name courseOfStudy").sort({ score: -1, submittedAt: 1 }).select("student score submittedAt status");
-  return res.json({ published: true, exam: { _id: exam._id, title: exam.title }, results });
+  const exams = await Exam.find({ scoreboardPublished: true }).sort({ scheduledEnd: -1 });
+  const boards = await Promise.all(
+    exams.map(async (exam) => {
+      const results = await Attempt.find({ exam: exam._id, status: { $in: ["submitted", "expired"] } })
+        .populate("student", "name courseOfStudy")
+        .sort({ score: -1, submittedAt: 1 })
+        .select("student score submittedAt status");
+      return { exam: { _id: exam._id, title: exam.title }, results };
+    })
+  );
+  return res.json({ published: boards.length > 0, boards });
 }
 
 export async function getPublicOverallScoreboard(_req: Request, res: Response) {
@@ -33,12 +42,15 @@ export async function getPublicOverallScoreboard(_req: Request, res: Response) {
   if (!publication?.published) return res.json({ published: false, results: [] });
   const results = await Attempt.aggregate([
     { $match: { status: { $in: ["submitted", "expired"] }, score: { $ne: null } } },
-    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" } } },
+    { $sort: { submittedAt: 1 } },
+    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" }, rankChange: { $last: "$rankChange" } } },
     { $lookup: { from: "students", localField: "_id", foreignField: "_id", as: "student" } },
     { $unwind: "$student" },
     { $addFields: { percentage: { $round: [{ $multiply: [{ $divide: ["$totalScore", "$totalQuestions"] }, 100] }, 1] } } },
     { $sort: { percentage: -1, latestSubmittedAt: 1 } },
-    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1 } },
+    // rankChange here reflects each student's most recent graded attempt: positive = climbed
+    // that many places since their previous attempt, negative = dropped, null = first attempt.
+    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1, rankChange: 1 } },
   ]);
   return res.json({ published: true, results });
 }

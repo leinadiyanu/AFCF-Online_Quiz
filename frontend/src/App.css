@@ -98,3 +98,29 @@ button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 	.back-onboarding:hover { background: var(--soft-surface); color: var(--ink); border-color: var(--coral); }
 	.resume { color: var(--muted); }
 }
+/* Rank movement indicator (overall scoreboard + post-quiz result) */
+.rank-change { font-weight: 700; text-transform: none; letter-spacing: 0; }
+.rank-change.up { color: #16a34a; }
+.rank-change.down { color: var(--coral); }
+.rank-change.flat { color: var(--muted); }
+.rank-change.new { color: var(--lime); }
+.rank-summary { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+.rank-summary b { color: var(--ink); }
+
+/* Previous-performance rows are now buttons that open the solution review */
+.history-row { width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--line); text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.history-row:hover { background: var(--soft-surface); }
+.view-solution { grid-column: 1 / -1; color: var(--ink); font-weight: 700; margin-top: 4px; }
+@media (max-width: 700px) { .view-solution { grid-column: 1; grid-row: 3; } }
+
+/* Solution review screen */
+.solution-review { padding: 6vh 0; flex: 1; }
+.solution-list { margin-top: 30px; }
+.solution-question.correct { border-left: 3px solid #16a34a; padding-left: 18px; }
+.solution-question.incorrect { border-left: 3px solid var(--coral); padding-left: 18px; }
+.options label.solution-correct { border-color: #16a34a; background: #f0fdf4; }
+.options label.solution-wrong { border-color: var(--coral); background: #fff1f2; }
+.solution-tag { display: block; margin-top: 6px; font: 500 10px 'DM Mono', monospace; text-transform: uppercase; color: #16a34a; }
+.solution-tag.wrong { color: var(--coral); }
+.question-diagram { max-width: 100%; margin: 16px 0 0 45px; border: 1px solid var(--line); }
+@media (max-width: 700px) { .question-diagram { margin-left: 0; } }

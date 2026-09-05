@@ -163,12 +163,13 @@ export async function publishScoreboard(req: Request, res: Response) {
 export async function overallScoreboard(_req: Request, res: Response) {
   const results = await Attempt.aggregate([
     { $match: { status: { $in: ["submitted", "expired"] }, score: { $ne: null } } },
-    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" } } },
+    { $sort: { submittedAt: 1 } },
+    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, quizzesTaken: { $sum: 1 }, latestSubmittedAt: { $max: "$submittedAt" }, rankChange: { $last: "$rankChange" } } },
     { $lookup: { from: "students", localField: "_id", foreignField: "_id", as: "student" } },
     { $unwind: "$student" },
     { $addFields: { percentage: { $round: [{ $multiply: [{ $divide: ["$totalScore", "$totalQuestions"] }, 100] }, 1] } } },
     { $sort: { percentage: -1, latestSubmittedAt: 1 } },
-    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1 } },
+    { $project: { _id: 0, student: { name: "$student.name", courseOfStudy: "$student.courseOfStudy" }, totalScore: 1, totalQuestions: 1, quizzesTaken: 1, percentage: 1, latestSubmittedAt: 1, rankChange: 1 } },
   ]);
   const publication = await ScoreboardPublication.findOne({ key: "overall" });
   return res.json({ published: Boolean(publication?.published), results });
@@ -181,6 +182,19 @@ export async function publishOverallScoreboard(req: Request, res: Response) {
     { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
   );
   return res.json({ published: publication.published });
+}
+
+// Publishes the scoreboard for every exam that has at least one graded attempt,
+// plus the overall cumulative scoreboard, in one action.
+export async function publishAllScoreboards(_req: Request, res: Response) {
+  const examIds = await Attempt.distinct("exam", { status: { $in: ["submitted", "expired"] }, exam: { $ne: null } });
+  await Exam.updateMany({ _id: { $in: examIds } }, { scoreboardPublished: true });
+  const publication = await ScoreboardPublication.findOneAndUpdate(
+    { key: "overall" },
+    { key: "overall", published: true },
+    { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
+  );
+  return res.json({ publishedExamCount: examIds.length, overallPublished: publication.published });
 }
 
 export async function listAdminData(_req: Request, res: Response) {

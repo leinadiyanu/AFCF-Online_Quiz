@@ -8,6 +8,20 @@ import { Exam } from "../models/Exam";
 
 const QUESTIONS_PER_SUBJECT = 10;
 
+// Recomputes the cumulative overall leaderboard and returns this student's current rank
+// (1-based), or null if they have no graded attempts yet (shouldn't happen right after grading).
+async function getOverallRank(studentId: mongoose.Types.ObjectId): Promise<number | null> {
+  const standings = await Attempt.aggregate([
+    { $match: { status: { $in: ["submitted", "expired"] }, score: { $ne: null } } },
+    { $group: { _id: "$student", totalScore: { $sum: "$score" }, totalQuestions: { $sum: { $size: "$questionIds" } }, latestSubmittedAt: { $max: "$submittedAt" } } },
+    { $addFields: { percentage: { $divide: ["$totalScore", "$totalQuestions"] } } },
+    { $sort: { percentage: -1, latestSubmittedAt: 1 } },
+    { $project: { _id: 1 } },
+  ]);
+  const index = standings.findIndex((entry) => entry._id.toString() === studentId.toString());
+  return index === -1 ? null : index + 1;
+}
+
 function getDeadline(startedAt: Date, durationMinutes: number): Date {
   return new Date(startedAt.getTime() + durationMinutes * 60_000);
 }
@@ -209,6 +223,18 @@ export async function submitAttempt(req: Request, res: Response) {
     attempt.submittedAt = now;
     attempt.status = isLate ? "expired" : "submitted";
     attempt.score = score;
+
+    // Work out how this attempt moved the student on the cumulative overall leaderboard.
+    const student = await Student.findById(attempt.student).select("lastOverallRank");
+    const previousRank = student?.lastOverallRank ?? null;
+    const newRank = await getOverallRank(attempt.student as mongoose.Types.ObjectId);
+    attempt.rankAfter = newRank;
+    attempt.rankChange = previousRank !== null && newRank !== null ? previousRank - newRank : null;
+    if (student && newRank !== null) {
+      student.lastOverallRank = newRank;
+      await student.save();
+    }
+
     await attempt.save();
 
     return res.json({
@@ -217,9 +243,76 @@ export async function submitAttempt(req: Request, res: Response) {
       score,
       totalQuestions: attempt.questionIds.length,
       late: isLate,
+      rankAfter: attempt.rankAfter,
+      rankChange: attempt.rankChange,
     });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to submit attempt" });
+  }
+}
+
+// GET /attempts/:id/review?email=...
+// Lets a student see their own finished attempt broken down question-by-question,
+// like a Google Forms quiz review: their answer, whether it was right, and the correct one.
+// Ownership is checked by email since the public flow has no auth token.
+export async function getAttemptReview(req: Request, res: Response) {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: "attemptId must be a valid ID" });
+    }
+    const email = String(req.query.email ?? "").trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: "email is required" });
+
+    const attempt = await Attempt.findById(req.params.id)
+      .populate("student", "email")
+      .populate("exam", "title");
+    if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+
+    const owner = attempt.student as unknown as { email: string } | null;
+    if (!owner || owner.email !== email) {
+      return res.status(403).json({ error: "This attempt does not belong to that email" });
+    }
+    if (attempt.status === "in_progress") {
+      return res.status(409).json({ error: "This attempt hasn't been submitted yet" });
+    }
+
+    const questions = await Question.find({ _id: { $in: attempt.questionIds } })
+      .select("_id subject text options correctOptionIndex diagramUrl diagramAltText");
+    const questionById = new Map(questions.map((q) => [q._id.toString(), q]));
+    const answerByQuestion = new Map(attempt.answers.map((a) => [a.question.toString(), a.selectedOptionIndex]));
+
+    const review = attempt.questionIds
+      .map((questionId) => {
+        const question = questionById.get(questionId.toString());
+        if (!question) return null;
+        const selectedOptionIndex = answerByQuestion.get(questionId.toString()) ?? null;
+        return {
+          questionId: question._id,
+          subject: question.subject,
+          text: question.text,
+          options: question.options,
+          diagramUrl: question.diagramUrl,
+          diagramAltText: question.diagramAltText,
+          correctOptionIndex: question.correctOptionIndex,
+          selectedOptionIndex,
+          isCorrect: selectedOptionIndex !== null && selectedOptionIndex === question.correctOptionIndex,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    const exam = attempt.exam as unknown as { title: string } | null;
+    return res.json({
+      attemptId: attempt._id,
+      exam: exam ? { title: exam.title } : null,
+      subjectCombinationCode: attempt.subjectCombinationCode,
+      score: attempt.score,
+      totalQuestions: attempt.questionIds.length,
+      submittedAt: attempt.submittedAt,
+      questions: review,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load attempt review" });
   }
 }
