@@ -42,6 +42,7 @@ export async function startAttempt(req: Request, res: Response) {
     // Prevent starting a second attempt while one is already in progress
     const existing = await Attempt.findOne({
       student: student._id,
+      exam: exam._id,
       status: "in_progress",
     });
     if (existing) {
@@ -67,7 +68,7 @@ export async function startAttempt(req: Request, res: Response) {
       return res.status(400).json({ error: "Subject combination not configured" });
     }
     if (!exam.subjectCombinations.some((id) => id.toString() === combo._id.toString())) {
-      return res.status(400).json({ error: "This subject combination is not enabled for the active exam" });
+      return res.status(400).json({ error: `Subject combination ${student.subjectCombinationCode} is not enabled for exam ${exam.title}. Select one of the combinations assigned to this exam.` });
     }
 
     // Pick an even set of questions so every subject contributes equally.

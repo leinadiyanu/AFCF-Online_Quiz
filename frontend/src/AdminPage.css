@@ -18,8 +18,8 @@
 .admin-login { max-width: 500px; margin: 15vh auto; }
 .back-link { background: transparent; color: #64748b; text-decoration: underline; margin-bottom: 30px; }
 .back-link:hover { color: #b45309; }
-.admin-message { color: #166534; background: #dcfce7; padding: 12px; border-radius: 6px; }
-.admin-error { color: #991b1b; background: #fee2e2; padding: 12px; border-radius: 6px; }
+.admin-message, .admin-error { position: fixed; top: 22px; left: 50%; z-index: 50; width: min(540px, calc(100vw - 32px)); margin: 0; transform: translateX(-50%); box-shadow: 0 12px 30px #17255426; color: #166534; background: #dcfce7; padding: 14px 18px; border-radius: 8px; animation: feedback-in .35s ease-out; }
+.admin-error { color: #991b1b; background: #fee2e2; }
 .admin-message, .admin-error { animation: feedback-in .35s ease-out; }
 @keyframes feedback-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .admin-message, .admin-error { animation: none; } }

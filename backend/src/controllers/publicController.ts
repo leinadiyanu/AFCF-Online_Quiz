@@ -5,10 +5,20 @@ import { ScoreboardPublication } from "../models/ScoreboardPublication";
 
 export async function getExamStatus(_req: Request, res: Response) {
   const now = new Date();
-  const exam = await Exam.findOne({ isActive: true, scheduledEnd: { $gte: now } }).sort({ scheduledStart: 1 }).populate("subjectCombinations", "code name subjects durationMinutes");
-  if (!exam) return res.json({ status: "none", active: false, exam: null });
-  const active = exam.scheduledStart <= now && exam.scheduledEnd >= now;
-  return res.json({ status: active ? "active" : "upcoming", active, exam: { _id: exam._id, title: exam.title, scheduledStart: exam.scheduledStart, scheduledEnd: exam.scheduledEnd, duration: exam.duration, subjectCombinations: exam.subjectCombinations } });
+  const exams = await Exam.find({ isActive: true, scheduledEnd: { $gte: now } }).sort({ scheduledStart: 1 }).populate("subjectCombinations", "code name subjects durationMinutes");
+  const activeExams = exams.filter((exam) => exam.scheduledStart <= now && exam.scheduledEnd >= now);
+  const upcomingExams = exams.filter((exam) => exam.scheduledStart > now);
+  const exam = activeExams[0] ?? upcomingExams[0];
+  if (!exam) return res.json({ status: "none", active: false, exams: [], exam: null });
+  const active = activeExams.length > 0;
+  return res.json({ status: active ? "active" : "upcoming", active, exams: exams.map((item) => ({ _id: item._id, title: item.title, scheduledStart: item.scheduledStart, scheduledEnd: item.scheduledEnd })), exam: { _id: exam._id, title: exam.title, scheduledStart: exam.scheduledStart, scheduledEnd: exam.scheduledEnd, duration: exam.duration, subjectCombinations: exam.subjectCombinations } });
+}
+
+export async function getExamAccess(req: Request, res: Response) {
+  const accessCode = String(req.params.code ?? "").trim().toUpperCase();
+  const exam = await Exam.findOne({ accessCode, isActive: true }).populate("subjectCombinations", "code name subjects durationMinutes");
+  if (!exam) return res.status(404).json({ error: "Invalid exam access code" });
+  return res.json({ exam: { _id: exam._id, title: exam.title, subjectCombinations: exam.subjectCombinations } });
 }
 
 export async function getPublicScoreboard(_req: Request, res: Response) {
