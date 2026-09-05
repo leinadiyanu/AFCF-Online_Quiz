@@ -14,6 +14,8 @@
 .admin-panel button, .admin-header button, .admin-login button, .exam-list button { background: #172554; color: white; border-radius: 6px; padding: 11px 14px; font-weight: 700; }
 .admin-panel button:not(:disabled):hover, .admin-header button:not(:disabled):hover, .admin-login button:not(:disabled):hover, .exam-list button:not(:disabled):hover { background: #b45309; transform: translateY(-1px); }
 .admin-panel button:not(:disabled):active, .admin-header button:not(:disabled):active, .admin-login button:not(:disabled):active, .exam-list button:not(:disabled):active { transform: translateY(0); }
+.exam-list .danger-button { background: #991b1b; }
+.exam-list .danger-button:not(:disabled):hover { background: #7f1d1d; }
 .admin-panel button:focus-visible, .admin-header button:focus-visible, .admin-login button:focus-visible, .exam-list button:focus-visible, .back-link:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 .admin-login { max-width: 500px; margin: 15vh auto; }
 .back-link { background: transparent; color: #64748b; text-decoration: underline; margin-bottom: 30px; }

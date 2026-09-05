@@ -36,19 +36,21 @@ export async function adminLogin(req: Request, res: Response) {
 export async function createCombination(req: Request, res: Response) {
   const { code, name, subjects, durationMinutes } = req.body;
   if (!code || !name || !Array.isArray(subjects) || !subjects.length) return res.status(400).json({ error: "code, name and subjects are required" });
-  const combo = await SubjectCombination.create({ code: normalize(code).toUpperCase(), name: normalize(name), subjects: subjects.map(normalize), durationMinutes: Number(durationMinutes) || 60 });
-  return res.status(201).json({ subjectCombination: combo });
+  const normalizedCode = normalize(code).toUpperCase();
+  const existing = await SubjectCombination.exists({ code: normalizedCode });
+  if (existing) return res.status(409).json({ error: `Subject combination ${normalizedCode} already exists` });
+  try {
+    const combo = await SubjectCombination.create({ code: normalizedCode, name: normalize(name), subjects: subjects.map(normalize), durationMinutes: Number(durationMinutes) || 60 });
+    return res.status(201).json({ subjectCombination: combo });
+  } catch (err) {
+    if ((err as { code?: number }).code === 11000) return res.status(409).json({ error: `Subject combination ${normalizedCode} already exists` });
+    throw err;
+  }
 }
 
-export async function createQuestion(req: Request, res: Response) {
-  const { text, options, correctAnswer, correctOptionIndex, subject, difficulty } = req.body;
-  const requestedCombos = req.body.subjectCombinationCodes ?? req.body.subjectCombinationCode ?? req.body.subjectCombination;
-  const resolved = await combinationIds(requestedCombos);
-  const optionList = Array.isArray(options) ? options.map(normalize) : [req.body.optionA, req.body.optionB, req.body.optionC, req.body.optionD].map(normalize);
-  const answerIndex = correctOptionIndex !== undefined ? Number(correctOptionIndex) : optionList.indexOf(normalize(correctAnswer));
-  if (!text || !subject || resolved.codes.length === 0 || optionList.some((option) => !option) || answerIndex < 0 || answerIndex >= optionList.length) return res.status(400).json({ error: "Valid question text, subject, combination and options are required; correctAnswer must match an option" });
-  const question = await Question.create({ text: normalize(text), options: optionList, correctOptionIndex: answerIndex, subject: normalize(subject), subjectCombinationCode: resolved.codes[0], subjectCombinationCodes: resolved.codes, difficulty });
-  return res.status(201).json({ question });
+export async function deleteUnbatchedQuestions(_req: Request, res: Response) {
+  const result = await Question.deleteMany({ $or: [{ uploadBatchId: { $exists: false } }, { uploadBatchId: "" }] });
+  return res.json({ deleted: result.deletedCount });
 }
 
 export async function bulkUploadQuestions(req: Request, res: Response) {
@@ -112,6 +114,15 @@ export async function toggleExam(req: Request, res: Response) {
   if (!exam) return res.status(404).json({ error: "Exam not found" });
   exam.isActive = req.body.isActive === undefined ? !exam.isActive : Boolean(req.body.isActive);
   await exam.save(); return res.json({ exam });
+}
+
+export async function deleteExam(req: Request, res: Response) {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "examId must be a valid ID" });
+  const exam = await Exam.findById(req.params.id).select("title");
+  if (!exam) return res.status(404).json({ error: "Exam not found" });
+  const attempts = await Attempt.deleteMany({ exam: exam._id });
+  await Exam.deleteOne({ _id: exam._id });
+  return res.json({ examId: exam._id, title: exam.title, deletedAttempts: attempts.deletedCount });
 }
 
 export async function scoreboard(req: Request, res: Response) {
