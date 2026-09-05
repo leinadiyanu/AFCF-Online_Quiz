@@ -98,11 +98,12 @@ export async function deleteQuestionBatch(req: Request, res: Response) {
 }
 
 export async function createExam(req: Request, res: Response) {
-  const { title, subjectCombinationIds, scheduledStart, scheduledEnd, duration } = req.body;
+  const { title, accessCode, subjectCombinationIds, scheduledStart, scheduledEnd, duration } = req.body;
   const resolved = await combinationIds(subjectCombinationIds ?? req.body.subjectCombinations);
   const start = new Date(scheduledStart); const end = new Date(scheduledEnd);
-  if (!title || !resolved.ids.length || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start || Number(duration) <= 0) return res.status(400).json({ error: "Valid title, combinations, schedule and duration are required" });
-  const exam = await Exam.create({ title: normalize(title), subjectCombinations: resolved.ids, scheduledStart: start, scheduledEnd: end, duration: Number(duration), isActive: true, status: start > new Date() ? "scheduled" : "active" });
+  const normalizedAccessCode = normalize(accessCode).toUpperCase() || crypto.randomBytes(5).toString("hex").toUpperCase();
+  if (!title || !/^[A-Z0-9-]{6,32}$/.test(normalizedAccessCode) || !resolved.ids.length || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start || Number(duration) <= 0) return res.status(400).json({ error: "Valid title, combinations, schedule and duration are required" });
+  const exam = await Exam.create({ title: normalize(title), accessCode: normalizedAccessCode, subjectCombinations: resolved.ids, scheduledStart: start, scheduledEnd: end, duration: Number(duration), isActive: true, status: start > new Date() ? "scheduled" : "active" });
   return res.status(201).json({ exam });
 }
 

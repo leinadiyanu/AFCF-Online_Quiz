@@ -20,6 +20,9 @@
 .back-link:hover { color: #b45309; }
 .admin-message { color: #166534; background: #dcfce7; padding: 12px; border-radius: 6px; }
 .admin-error { color: #991b1b; background: #fee2e2; padding: 12px; border-radius: 6px; }
+.admin-message, .admin-error { animation: feedback-in .35s ease-out; }
+@keyframes feedback-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .admin-message, .admin-error { animation: none; } }
 .admin-panel p { color: #64748b; font-size: 13px; line-height: 1.5; }
 .exam-list { grid-column: 1 / -1; }
 .exam-list article { display: flex; justify-content: space-between; gap: 20px; align-items: center; border-top: 1px solid #e2e8f0; padding: 16px 0; }

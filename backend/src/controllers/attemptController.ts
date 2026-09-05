@@ -16,7 +16,7 @@ function getDeadline(startedAt: Date, durationMinutes: number): Date {
 // Creates the timed session. This is the moment the clock starts — server-side.
 export async function startAttempt(req: Request, res: Response) {
   try {
-    const { studentId } = req.body;
+    const { studentId, examCode } = req.body;
     if (!studentId) {
       return res.status(400).json({ error: "studentId is required" });
     }
@@ -29,11 +29,15 @@ export async function startAttempt(req: Request, res: Response) {
 
     const now = new Date();
     const exam = await Exam.findOne({
+      accessCode: String(examCode ?? "").trim().toUpperCase(),
       isActive: true,
       scheduledStart: { $lte: now },
       scheduledEnd: { $gte: now },
     }).sort({ scheduledEnd: 1 });
     if (!exam) return res.status(409).json({ error: "There is no active exam right now" });
+
+    const completedAttempt = await Attempt.exists({ student: student._id, exam: exam._id, status: { $in: ["submitted", "expired"] } });
+    if (completedAttempt) return res.status(409).json({ error: "This email has already taken this exam" });
 
     // Prevent starting a second attempt while one is already in progress
     const existing = await Attempt.findOne({

@@ -1,14 +1,16 @@
 import { Request, Response } from "express";
 import { Student } from "../models/Student";
 import { SubjectCombination } from "../models/SubjectCombination";
+import { Exam } from "../models/Exam";
+import { Attempt } from "../models/Attempt";
 
 export async function createStudent(req: Request, res: Response) {
   try {
-    const { name, email, phoneNumber, courseOfStudy, subjectCombinationCode } = req.body;
+    const { name, email, phoneNumber, courseOfStudy, subjectCombinationCode, examCode } = req.body;
 
-    if (!name || !email || !phoneNumber || !courseOfStudy || !subjectCombinationCode) {
+    if (!name || !email || !phoneNumber || !courseOfStudy || !subjectCombinationCode || !examCode) {
       return res.status(400).json({
-        error: "name, email, phoneNumber, courseOfStudy and subjectCombinationCode are required",
+        error: "name, email, phoneNumber, courseOfStudy, subjectCombinationCode and examCode are required",
       });
     }
 
@@ -16,6 +18,15 @@ export async function createStudent(req: Request, res: Response) {
     const normalizedPhone = String(phoneNumber).trim();
     if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
       return res.status(400).json({ error: "A valid email address is required" });
+    }
+
+    const now = new Date();
+    const exam = await Exam.findOne({ accessCode: String(examCode).trim().toUpperCase(), isActive: true, scheduledStart: { $lte: now }, scheduledEnd: { $gte: now } });
+    if (!exam) return res.status(403).json({ error: "Invalid exam code or the exam is not currently active" });
+
+    const existingStudents = await Student.find({ email: normalizedEmail }).select("_id");
+    if (existingStudents.length && await Attempt.exists({ student: { $in: existingStudents.map((student) => student._id) }, exam: exam._id })) {
+      return res.status(409).json({ error: "This email has already taken this exam" });
     }
     if (!/^[+\d][\d\s().-]{6,}$/.test(normalizedPhone)) {
       return res.status(400).json({ error: "A valid phone number is required" });

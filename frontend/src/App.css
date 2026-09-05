@@ -15,6 +15,7 @@
 .contact-fields { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(150px, .9fr); gap: 20px; }
 .exam-banner { display: grid; gap: 6px; max-width: 520px; margin-top: 32px; padding: 16px 18px; border-left: 4px solid #f59e0b; background: #fff7ed; color: #7c2d12; }
 .exam-banner span { color: #64748b; font-size: 13px; line-height: 1.5; }
+.exam-code-field { max-width: 520px; margin: 20px 0 0; }
 .exam-end-time { margin: 18px 0 0; color: #166534; font: 600 12px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .04em; }
 .exam-banner.active { border-color: #16a34a; background: #f0fdf4; color: #166534; }
 .exam-banner.none { border-color: #94a3b8; background: #f1f5f9; color: #334155; }
@@ -28,7 +29,7 @@
 @media (min-width: 701px) and (max-width: 1020px) { .intro { grid-template-columns: minmax(0, 1fr) minmax(360px, .9fr); gap: 36px; } .contact-fields { grid-template-columns: 1fr; } }
 .kicker, legend small { color: #1e40af; }
 input:focus, select:focus { border-color: #f59e0b; }
-.alert { background: #fee2e2; color: #b91c1c; }
+.alert { background: #fee2e2; color: #b91c1c; animation: feedback-in .35s ease-out; }
 .intro h1 em { color: #b45309; }
 .exam-top { position: sticky; top: 0; z-index: 10; background: var(--paper); padding: 14px 0 20px; }
 .masthead, .masthead .eyebrow, .masthead .session { color: #000; }
@@ -45,3 +46,5 @@ legend > div { min-width: 0; line-height: 1.45; }
 .intake button:not(:disabled):active, .submit:not(:disabled):active, .result button:not(:disabled):active { transform: translateY(0); }
 button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 .options label:hover { border-color: var(--coral); background: #fff7ed; }
+@keyframes feedback-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .alert { animation: none; } }
