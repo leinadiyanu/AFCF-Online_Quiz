@@ -28,13 +28,28 @@
 .admin-panel p { color: #64748b; font-size: 13px; line-height: 1.5; }
 .exam-list { grid-column: 1 / -1; }
 .exam-list article { display: flex; justify-content: space-between; gap: 20px; align-items: center; border-top: 1px solid #e2e8f0; padding: 16px 0; }
+.edit-exam-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: end; width: 100%; }
+.edit-exam-form strong { grid-column: 1 / -1; }
+.edit-exam-form label { color: #475569; font-size: 12px; display: grid; gap: 4px; }
+.edit-exam-form input { border: 1px solid #cbd5e1; padding: 8px; background: #fff; color: #172554; }
+.edit-exam-form div { display: flex; gap: 8px; }
+@media (max-width: 760px) { .edit-exam-form { grid-template-columns: 1fr; } }
+@media (prefers-color-scheme: dark) { .edit-exam-form input { background: #111827; color: #e5e7eb; border-color: #64748b; } }
 .exam-list article div:first-child { display: grid; gap: 5px; }
 .exam-list small { color: #64748b; }
 .exam-list article div:last-child { display: flex; gap: 8px; }
 @media (max-width: 760px) { .admin-grid { grid-template-columns: 1fr; } .admin-header { align-items: start; gap: 20px; } .exam-list article { align-items: start; flex-direction: column; } }
 @media (prefers-color-scheme: dark) {
-	.admin-shell { color: #e5e7eb; background: #111827; }
+	.admin-shell { color: #e5e7eb; background: #0b1220; }
 	.admin-panel, .admin-login { background: #1f2937; border-color: #475569; }
 	.admin-panel input, .admin-panel select, .admin-panel textarea, .admin-login input { background: #111827; color: #e5e7eb; border-color: #64748b; }
 	.admin-header { border-color: #475569; }
+	.admin-kicker { color: #fbbf24; }
+	.admin-panel label, .admin-login label, .admin-panel p, .exam-list small, .edit-exam-form label { color: #94a3b8; }
+	.back-link { color: #94a3b8; }
+	.back-link:hover { color: #fbbf24; }
+	.exam-list article { border-color: #334155; }
+	.admin-message { color: #bbf7d0; background: #123524; }
+	.admin-error { color: #fecaca; background: #450a0a; }
+	.admin-message, .admin-error { box-shadow: 0 12px 30px #00000066; }
 }

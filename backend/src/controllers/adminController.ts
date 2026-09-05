@@ -109,11 +109,33 @@ export async function createExam(req: Request, res: Response) {
   return res.status(201).json({ exam });
 }
 
-export async function toggleExam(req: Request, res: Response) {
+export async function updateExam(req: Request, res: Response) {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "examId must be a valid ID" });
   const exam = await Exam.findById(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found" });
-  exam.isActive = req.body.isActive === undefined ? !exam.isActive : Boolean(req.body.isActive);
-  await exam.save(); return res.json({ exam });
+
+  const { isActive, scheduledStart, scheduledEnd, duration } = req.body;
+  const editingSchedule = scheduledStart !== undefined || scheduledEnd !== undefined || duration !== undefined;
+
+  if (editingSchedule) {
+    const start = scheduledStart !== undefined ? new Date(scheduledStart) : exam.scheduledStart;
+    const end = scheduledEnd !== undefined ? new Date(scheduledEnd) : exam.scheduledEnd;
+    const nextDuration = duration !== undefined ? Number(duration) : exam.duration;
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start || !(nextDuration > 0)) {
+      return res.status(400).json({ error: "A valid schedule (start before end) and a positive duration are required" });
+    }
+    exam.scheduledStart = start;
+    exam.scheduledEnd = end;
+    exam.duration = nextDuration;
+    const now = new Date();
+    exam.status = start > now ? "scheduled" : end < now ? "completed" : "active";
+  }
+
+  if (isActive !== undefined) exam.isActive = Boolean(isActive);
+  else if (!editingSchedule) exam.isActive = !exam.isActive;
+
+  await exam.save();
+  return res.json({ exam });
 }
 
 export async function deleteExam(req: Request, res: Response) {
