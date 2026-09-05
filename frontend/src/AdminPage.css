@@ -30,3 +30,9 @@
 .exam-list small { color: #64748b; }
 .exam-list article div:last-child { display: flex; gap: 8px; }
 @media (max-width: 760px) { .admin-grid { grid-template-columns: 1fr; } .admin-header { align-items: start; gap: 20px; } .exam-list article { align-items: start; flex-direction: column; } }
+@media (prefers-color-scheme: dark) {
+	.admin-shell { color: #e5e7eb; background: #111827; }
+	.admin-panel, .admin-login { background: #1f2937; border-color: #475569; }
+	.admin-panel input, .admin-panel select, .admin-panel textarea, .admin-login input { background: #111827; color: #e5e7eb; border-color: #64748b; }
+	.admin-header { border-color: #475569; }
+}
