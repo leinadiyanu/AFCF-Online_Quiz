@@ -1,5 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
-:root { color-scheme: light dark; --ink: #1e3a8a; --muted: #64748b; --paper: #f8fafc; --line: #e2e8f0; --lime: #f59e0b; --coral: #ef4444; --field-line: #aeb8ae; --surface: #ffffff; --soft-surface: #fff7ed; --button-bg: #1e3a8a; --button-text: #ffffff; }
+:root { color-scheme: light only; --ink: #1e3a8a; --muted: #64748b; --paper: #f8fafc; --line: #e2e8f0; --lime: #f59e0b; --coral: #ef4444; --field-line: #aeb8ae; --surface: #ffffff; --soft-surface: #fff7ed; --button-bg: #1e3a8a; --button-text: #ffffff; }
 * { box-sizing: border-box; } body { margin: 0; background: var(--paper); color: var(--ink); font-family: Manrope, sans-serif; } button, input, select { font: inherit; } button { cursor: pointer; border: 0; }
 .shell { max-width: 1240px; min-height: 100vh; margin: auto; padding: 30px 6vw 24px; display: flex; flex-direction: column; }
 .masthead, footer, .exam-top, .alert { display: flex; justify-content: space-between; align-items: center; }.masthead { border-bottom: 1px solid var(--line); padding-bottom: 22px; }.brand { display: flex; align-items: center; gap: 15px; }.brand-logo { display: block; width: 112px; height: 58px; object-fit: contain; object-position: left center; }.eyebrow, .session, .kicker, small, footer { font: 500 11px 'DM Mono', monospace; letter-spacing: .06em; text-transform: uppercase; }.brand .eyebrow { color: var(--ink); font-size: 19px; font-weight: 700; letter-spacing: .08em; }.session { color: var(--muted); }
@@ -73,7 +73,7 @@ button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 .options label:hover { border-color: var(--coral); background: #fff7ed; }
 @keyframes feedback-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .alert { animation: none; } }
-@media (prefers-color-scheme: dark) {
+/* @media (prefers-color-scheme: dark) {
 	:root { --ink: #e5e7eb; --muted: #a8b1c2; --paper: #111827; --line: #334155; --surface: #1f2937; --soft-surface: #3b2b16; --field-line: #64748b; }
 	body { background: var(--paper); color: var(--ink); }
 	.masthead, .masthead .eyebrow, .masthead .session, footer, footer span, .exam-top h1 { color: var(--ink); }
@@ -84,4 +84,4 @@ button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 	.exam-banner.none { background: #263244; color: #cbd5e1; }
 	.question-diagram { background: var(--surface); }
 	.options label:hover { background: #3b2b16; }
-}
+} */
