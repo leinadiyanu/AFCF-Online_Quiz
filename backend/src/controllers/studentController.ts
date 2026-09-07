@@ -33,8 +33,13 @@ export async function createStudent(req: Request, res: Response) {
       return res.status(400).json({ error: "A valid phone number is required" });
     }
 
+    const normalizedCombinationCode = String(subjectCombinationCode).trim().toUpperCase();
+    if (!/^[A-Z0-9]{2,10}$/.test(normalizedCombinationCode)) {
+      return res.status(400).json({ error: "Subject combination code must be alphanumeric (e.g. ART03)" });
+    }
+
     const combo = await SubjectCombination.findOne({
-      code: subjectCombinationCode,
+      code: normalizedCombinationCode,
     });
     if (!combo) {
       return res.status(400).json({ error: "Unknown subject combination code" });
@@ -45,7 +50,7 @@ export async function createStudent(req: Request, res: Response) {
       email: normalizedEmail,
       phoneNumber: normalizedPhone,
       courseOfStudy,
-      subjectCombinationCode,
+      subjectCombinationCode: normalizedCombinationCode,
     });
 
     return res.status(201).json({ studentId: student._id, student });
@@ -93,4 +98,36 @@ export async function getStudentProfile(req: Request, res: Response) {
 export async function listSubjectCombinations(_req: Request, res: Response) {
   const combos = await SubjectCombination.find().select("code name subjects");
   return res.json({ subjectCombinations: combos });
+}
+
+function normalizePhone(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+// Standalone "check my results" lookup: no active exam code needed, so students can
+// review any past exam's solutions at any time. Since there's no password anywhere in
+// this app, email + phone number together act as a light two-factor check.
+export async function getStudentResults(req: Request, res: Response) {
+  try {
+    const email = String(req.query.email ?? "").trim().toLowerCase();
+    const phoneNumber = String(req.query.phoneNumber ?? "").trim();
+    if (!/^\S+@\S+\.\S+$/.test(email) || !phoneNumber) {
+      return res.status(400).json({ error: "A valid email and phone number are required" });
+    }
+
+    const student = await Student.findOne({ email });
+    if (!student || normalizePhone(student.phoneNumber) !== normalizePhone(phoneNumber)) {
+      return res.status(404).json({ error: "No student record matches that email and phone number" });
+    }
+
+    const attempts = await Attempt.find({ student: student._id, status: { $in: ["submitted", "expired"] } })
+      .populate("exam", "title")
+      .sort({ submittedAt: -1 })
+      .select("exam subjectCombinationCode score submittedAt status");
+
+    return res.json({ student: { name: student.name, email: student.email }, attempts });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load results" });
+  }
 }

@@ -37,6 +37,9 @@ export async function createCombination(req: Request, res: Response) {
   const { code, name, subjects, durationMinutes } = req.body;
   if (!code || !name || !Array.isArray(subjects) || !subjects.length) return res.status(400).json({ error: "code, name and subjects are required" });
   const normalizedCode = normalize(code).toUpperCase();
+  if (!/^[A-Z0-9]{2,10}$/.test(normalizedCode)) {
+    return res.status(400).json({ error: "Code must be alphanumeric, 2-10 characters (e.g. ART03)" });
+  }
   const existing = await SubjectCombination.exists({ code: normalizedCode });
   if (existing) return res.status(409).json({ error: `Subject combination ${normalizedCode} already exists` });
   try {

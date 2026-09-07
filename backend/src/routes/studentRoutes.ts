@@ -1,11 +1,12 @@
 import { Router } from "express";
-import { createStudent, getStudentProfile, listSubjectCombinations } from "../controllers/studentController";
+import { createStudent, getStudentProfile, getStudentResults, listSubjectCombinations } from "../controllers/studentController";
 import { getExamAccess, getExamStatus, getPublicOverallScoreboard, getPublicScoreboard } from "../controllers/publicController";
 
 const router = Router();
 
 router.post("/students", createStudent);
 router.get("/students/profile", getStudentProfile);
+router.get("/students/results", getStudentResults);
 router.get("/subject-combinations", listSubjectCombinations);
 router.get("/exam-status", getExamStatus);
 router.get("/exam-access/:code", getExamAccess);
