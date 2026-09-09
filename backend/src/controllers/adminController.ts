@@ -12,6 +12,7 @@ import { ScoreboardPublication } from "../models/ScoreboardPublication";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import { JWT_SECRET } from "../middleware/requireAdmin";
+import { QUESTIONS_PER_SUBJECT, REPEAT_CAP_TOTAL } from "./attemptController";
 
 function normalize(value: unknown) { return String(value ?? "").trim(); }
 
@@ -54,6 +55,36 @@ export async function createCombination(req: Request, res: Response) {
 export async function deleteUnbatchedQuestions(_req: Request, res: Response) {
   const result = await Question.deleteMany({ $or: [{ uploadBatchId: { $exists: false } }, { uploadBatchId: "" }] });
   return res.json({ deleted: result.deletedCount });
+}
+
+// GET /admin/question-coverage
+// Per subject combination, shows how many eligible questions exist for each subject, so an
+// admin can see at a glance which subjects are ready for students and which need more
+// questions uploaded — instead of finding out only when a student hits a "not enough
+// questions" error. "healthy" means there's comfortable headroom above the bare minimum of
+// QUESTIONS_PER_SUBJECT, so returning students can keep getting mostly-fresh exams under the
+// REPEAT_CAP_TOTAL policy without repeatedly falling back to full repeats.
+export async function getQuestionCoverage(_req: Request, res: Response) {
+  const combos = await SubjectCombination.find().sort({ code: 1 });
+  const healthyThreshold = QUESTIONS_PER_SUBJECT + REPEAT_CAP_TOTAL + 3;
+
+  const coverage = await Promise.all(
+    combos.map(async (combo) => {
+      const subjects = await Promise.all(
+        combo.subjects.map(async (subject) => {
+          const count = await Question.countDocuments({
+            subject,
+            $or: [{ subjectCombinationCodes: combo.code }, { subjectCombinationCode: combo.code }],
+          });
+          const status = count < QUESTIONS_PER_SUBJECT ? "insufficient" : count < healthyThreshold ? "tight" : "healthy";
+          return { subject, count, status };
+        })
+      );
+      return { code: combo.code, name: combo.name, subjects };
+    })
+  );
+
+  return res.json({ coverage, questionsPerSubject: QUESTIONS_PER_SUBJECT, repeatCapTotal: REPEAT_CAP_TOTAL });
 }
 
 export async function bulkUploadQuestions(req: Request, res: Response) {

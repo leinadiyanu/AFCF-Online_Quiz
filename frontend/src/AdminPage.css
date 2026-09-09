@@ -53,3 +53,9 @@
 	.admin-error { color: #fecaca; background: #450a0a; }
 	.admin-message, .admin-error { box-shadow: 0 12px 30px #00000066; }
 }
+/* Question coverage: badges showing how many questions exist per subject */
+.coverage-subjects { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.coverage-badge { font: 600 12px 'DM Mono', monospace; padding: 4px 10px; border-radius: 999px; border: 1px solid #cbd5e1; }
+.coverage-badge.healthy { background: #f0fdf4; border-color: #16a34a; color: #15803d; }
+.coverage-badge.tight { background: #fffbeb; border-color: #f59e0b; color: #b45309; }
+.coverage-badge.insufficient { background: #fff1f2; border-color: #e11d48; color: #be123c; }

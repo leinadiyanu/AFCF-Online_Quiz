@@ -6,7 +6,12 @@ import { SubjectCombination } from "../models/SubjectCombination";
 import { Question } from "../models/Question";
 import { Exam } from "../models/Exam";
 
-const QUESTIONS_PER_SUBJECT = 10;
+export const QUESTIONS_PER_SUBJECT = 10;
+// At most this many questions across the WHOLE exam may repeat from the student's previous
+// attempt (spread across subjects however the sampling happens to land, not per subject).
+// Lower to 1 or 0 for a stricter no-repeat policy, as long as your question banks are large
+// enough to still fill the remaining fresh slots.
+export const REPEAT_CAP_TOTAL = 2;
 
 // Recomputes the cumulative overall leaderboard and returns this student's current rank
 // (1-based), or null if they have no graded attempts yet (shouldn't happen right after grading).
@@ -85,18 +90,68 @@ export async function startAttempt(req: Request, res: Response) {
       return res.status(400).json({ error: `Subject combination ${student.subjectCombinationCode} is not enabled for exam ${exam.title}. Select one of the combinations assigned to this exam.` });
     }
 
-    // Pick an even set of questions so every subject contributes equally.
-    const questionGroups = await Promise.all(
-      combo.subjects.map((subject) =>
-        Question.aggregate([
-          { $match: { subject, $or: [{ subjectCombinationCodes: combo.code }, { subjectCombinationCode: combo.code }] } },
-          { $sample: { size: QUESTIONS_PER_SUBJECT } },
-        ])
-      )
-    );
+    // Look at the student's most recent finished attempt for this same subject combination
+    // (any exam), so we can avoid re-serving most of the same questions this time around.
+    const previousAttempt = await Attempt.findOne({
+      student: student._id,
+      subjectCombinationCode: student.subjectCombinationCode,
+      status: { $in: ["submitted", "expired"] },
+    })
+      .sort({ submittedAt: -1 })
+      .select("questionIds");
+    const previousQuestionIds = previousAttempt?.questionIds ?? [];
+
+    // Pick an even set of questions so every subject contributes equally, while allowing at
+    // most REPEAT_CAP_TOTAL questions across the WHOLE exam to repeat from the student's last
+    // attempt. Subjects are processed one at a time (not in parallel) so this shared budget
+    // decrements correctly as it's spent — whichever subject is processed first gets first
+    // claim on it.
+    let remainingRepeatBudget = REPEAT_CAP_TOTAL;
+
+    async function pickQuestionsForSubject(subject: string) {
+      const baseMatch = { subject, $or: [{ subjectCombinationCodes: combo!.code }, { subjectCombinationCode: combo!.code }] };
+
+      let repeats: Awaited<ReturnType<typeof Question.aggregate>> = [];
+      if (previousQuestionIds.length && remainingRepeatBudget > 0) {
+        repeats = await Question.aggregate([
+          { $match: { ...baseMatch, _id: { $in: previousQuestionIds } } },
+          { $sample: { size: remainingRepeatBudget } },
+        ]);
+        remainingRepeatBudget -= repeats.length;
+      }
+
+      const freshNeeded = QUESTIONS_PER_SUBJECT - repeats.length;
+      const fresh = await Question.aggregate([
+        { $match: { ...baseMatch, _id: { $nin: previousQuestionIds } } },
+        { $sample: { size: freshNeeded } },
+      ]);
+
+      // Safety net: if the fresh pool ran dry (small question bank + heavy overlap with what
+      // this student already took), top up with more repeats rather than blocking the exam
+      // outright. A slightly more repetitive exam beats an error the student can't fix themselves.
+      const stillNeeded = QUESTIONS_PER_SUBJECT - repeats.length - fresh.length;
+      let topUp: Awaited<ReturnType<typeof Question.aggregate>> = [];
+      if (stillNeeded > 0) {
+        const alreadyPickedIds = [...repeats, ...fresh].map((q) => q._id);
+        topUp = await Question.aggregate([
+          { $match: { ...baseMatch, _id: { $nin: alreadyPickedIds } } },
+          { $sample: { size: stillNeeded } },
+        ]);
+      }
+
+      return [...repeats, ...fresh, ...topUp];
+    }
+
+    const questionGroups: Awaited<ReturnType<typeof pickQuestionsForSubject>>[] = [];
+    for (const subject of combo.subjects) {
+      questionGroups.push(await pickQuestionsForSubject(subject));
+    }
     const questions = questionGroups.flat();
 
-    if (questions.length !== combo.subjects.length * QUESTIONS_PER_SUBJECT) {
+    // Belt-and-braces: each subject only draws from its own tagged pool so cross-subject
+    // duplicates shouldn't be structurally possible, but guard against it explicitly anyway.
+    const uniqueQuestionIds = new Set(questions.map((q) => q._id.toString()));
+    if (uniqueQuestionIds.size !== questions.length || questions.length !== combo.subjects.length * QUESTIONS_PER_SUBJECT) {
       return res
         .status(400)
         .json({
