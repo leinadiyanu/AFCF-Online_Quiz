@@ -106,6 +106,8 @@ button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 .rank-change.down { color: var(--coral); }
 .rank-change.flat { color: var(--muted); }
 .rank-change.new { color: var(--lime); }
+.score-row b.low-score { color: var(--coral); }
+.score-row b.good-score { color: #16a34a; }
 .rank-summary { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
 .rank-summary b { color: var(--ink); }
 

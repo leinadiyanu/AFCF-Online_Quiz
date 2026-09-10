@@ -26,7 +26,7 @@ function RankChange({ value }: { value: number | null }) {
 }
 
 function OverallScoreboard({ scoreboard }: { scoreboard: OverallScoreboard }) {
-  return <section className="public-scoreboard"><p className="kicker">Overall performance</p><h2>Published results across all quizzes</h2>{scoreboard.results.length ? scoreboard.results.map((entry, index) => <div className="score-row" key={`${entry.student.name}-${entry.quizzesTaken}`}><span>{String(index + 1).padStart(2, '0')}</span><div className="student-cell"><strong>{entry.student.name}</strong><small>{entry.student.courseOfStudy} · {entry.quizzesTaken} quiz{entry.quizzesTaken === 1 ? '' : 'zes'}</small><RankChange value={entry.rankChange} /></div><b>{entry.percentage.toFixed(1)}%</b></div>) : <p className="status">No completed quiz results yet.</p>}</section>
+  return <section className="public-scoreboard"><p className="kicker">Overall performance</p><h2>Published results across all quizzes</h2>{scoreboard.results.length ? scoreboard.results.map((entry, index) => <div className="score-row" key={`${entry.student.name}-${entry.quizzesTaken}`}><span>{String(index + 1).padStart(2, '0')}</span><div className="student-cell"><strong>{entry.student.name}</strong><small>{entry.student.courseOfStudy} · {entry.quizzesTaken} quiz{entry.quizzesTaken === 1 ? '' : 'zes'}</small><RankChange value={entry.rankChange} /></div><b className={entry.percentage < 80 ? 'low-score' : 'good-score'}>{entry.percentage.toFixed(1)}%</b></div>) : <p className="status">No completed quiz results yet.</p>}</section>
 }
 
 function Footer() {
