@@ -93,9 +93,8 @@ button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 	.options label { border-color: var(--line); }
 	.options label:hover { background: #3b2b16; border-color: var(--coral); }
 	.options label.selected { border-color: var(--lime); color: #1e293b; }
-	.options label.solution-correct { background: #123524; border-color: #16a34a; color: #bbf7d0; }
-    .options label.solution-wrong { background: #450a0a; border-color: var(--coral); color: #fecaca; }
-	.alert { background: #450a0a; color: #fecaca; box-shadow: 0 12px 30px #00000066; }
+    .options label.solution-correct { background: rgba(22, 163, 74, 0.15); border-color: #16a34a; }
+	.options label.solution-wrong { background: rgba(239, 68, 68, 0.15); border-color: var(--coral); }	.alert { background: #450a0a; color: #fecaca; box-shadow: 0 12px 30px #00000066; }
 	.onboarding-actions .quiet-button { border-color: var(--line); color: var(--muted); }
 	.onboarding-actions .quiet-button:not(:disabled):hover { background: var(--soft-surface); color: var(--ink); border-color: var(--coral); }
 	.back-onboarding { border-color: var(--line); color: var(--muted); }
