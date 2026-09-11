@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import rateLimit from "express-rate-limit";
 import { requireAdmin } from "../middleware/requireAdmin";
-import { adminLogin, bulkUploadQuestions, createCombination, createExam, deleteExam, deleteQuestionBatch, deleteUnbatchedQuestions, getQuestionCoverage, listAdminData, listQuestionBatches, overallScoreboard, publishAllScoreboards, publishOverallScoreboard, publishScoreboard, scoreboard, updateExam } from "../controllers/adminController";
+import { adminLogin, bulkUploadQuestions, createCombination, createExam, deleteExam, deleteQuestionBatch, deleteUnbatchedQuestions, getQuestionCoverage, listAdminData, listQuestionBatches, listQuestions, overallScoreboard, publishAllScoreboards, publishOverallScoreboard, publishScoreboard, scoreboard, updateExam, updateQuestion } from "../controllers/adminController";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -16,6 +16,8 @@ router.get("/scoreboard/overall", overallScoreboard);
 router.post("/subject-combinations", createCombination);
 router.post("/questions/bulk-upload", upload.single("file"), bulkUploadQuestions);
 router.get("/question-batches", listQuestionBatches);
+router.get("/questions", listQuestions);
+router.put("/questions/:id", updateQuestion);
 router.delete("/questions/unbatched", deleteUnbatchedQuestions);
 router.delete("/question-batches/:batchId", deleteQuestionBatch);
 router.post("/exams", createExam);

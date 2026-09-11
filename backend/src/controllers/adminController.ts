@@ -133,6 +133,42 @@ export async function deleteQuestionBatch(req: Request, res: Response) {
   return res.json({ batchId: req.params.batchId, deleted: result.deletedCount });
 }
 
+// GET /admin/questions?subjectCombinationCode=XYZ&subject=Physics
+// Lists questions for a given branch (subject combination) so an admin can review and edit
+// what students will actually see, instead of only being able to bulk-upload blind.
+export async function listQuestions(req: Request, res: Response) {
+  const code = normalize(req.query.subjectCombinationCode);
+  if (!code) return res.status(400).json({ error: "subjectCombinationCode is required" });
+  const filter: Record<string, unknown> = { $or: [{ subjectCombinationCodes: code }, { subjectCombinationCode: code }] };
+  const subject = normalize(req.query.subject);
+  if (subject) filter.subject = subject;
+  const questions = await Question.find(filter).sort({ subject: 1, _id: 1 });
+  return res.json({ questions });
+}
+
+// PUT /admin/questions/:id
+// Edits an existing question in place. Options length and correctOptionIndex are re-validated
+// the same way bulk upload validates them, so a bad edit can't silently break a student's exam.
+export async function updateQuestion(req: Request, res: Response) {
+  const question = await Question.findById(req.params.id);
+  if (!question) return res.status(404).json({ error: "Question not found" });
+  const { text, options, correctOptionIndex, subject, difficulty, diagramUrl, diagramAltText } = req.body;
+  if (options !== undefined) {
+    if (!Array.isArray(options) || options.map(normalize).some((option) => !option) || options.length < 2) return res.status(400).json({ error: "Provide at least two non-empty options" });
+    question.options = options.map(normalize);
+  }
+  const nextCorrectIndex = correctOptionIndex !== undefined ? Number(correctOptionIndex) : question.correctOptionIndex;
+  if (Number.isNaN(nextCorrectIndex) || nextCorrectIndex < 0 || nextCorrectIndex >= question.options.length) return res.status(400).json({ error: "correctOptionIndex must point at one of the options" });
+  question.correctOptionIndex = nextCorrectIndex;
+  if (text !== undefined) { if (!normalize(text)) return res.status(400).json({ error: "Question text cannot be empty" }); question.text = normalize(text); }
+  if (subject !== undefined) { if (!normalize(subject)) return res.status(400).json({ error: "Subject cannot be empty" }); question.subject = normalize(subject); }
+  if (difficulty !== undefined) { const nextDifficulty = normalize(difficulty); question.difficulty = (["easy", "medium", "hard"] as const).includes(nextDifficulty as "easy" | "medium" | "hard") ? (nextDifficulty as "easy" | "medium" | "hard") : undefined; }
+  if (diagramUrl !== undefined) question.diagramUrl = normalize(diagramUrl) || undefined;
+  if (diagramAltText !== undefined) question.diagramAltText = normalize(diagramAltText) || undefined;
+  await question.save();
+  return res.json({ question });
+}
+
 export async function createExam(req: Request, res: Response) {
   const { title, accessCode, subjectCombinationIds, scheduledStart, scheduledEnd, duration } = req.body;
   const resolved = await combinationIds(subjectCombinationIds ?? req.body.subjectCombinations);
