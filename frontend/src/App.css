@@ -91,10 +91,11 @@ button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 @keyframes feedback-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .alert { animation: none; } }
 @media (prefers-color-scheme: dark) {
-	:root { --ink: #f1f5f9; --muted: #94a3b8; --paper: #0b1220; --line: #334155; --surface: #1e293b; --soft-surface: #3b2b16; --field-line: #64748b; }
+	:root { color-scheme: dark; --ink: #f1f5f9; --muted: #94a3b8; --paper: #0b1220; --line: #334155; --surface: #1e293b; --soft-surface: #3b2b16; --field-line: #64748b; }
 	body { background: var(--paper); color: var(--ink); }
 	.masthead, .masthead .eyebrow, .masthead .session, footer, footer span, .exam-top h1 { color: var(--ink); }
 	input, select { color: var(--ink); border-color: var(--field-line); }
+	select option { background: var(--paper); color: var(--ink); }
 	.kicker, legend small { color: #93c5fd; }
 	.intro h1 em, h1 em { color: #fbbf24; }
 	.exam-banner { background: var(--soft-surface); color: #fed7aa; border-color: #b45309; }
